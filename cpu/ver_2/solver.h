@@ -5,8 +5,6 @@
 #include <stdbool.h>
 #include <vector>
 
-#define POLY_MASK_32 0xB4BCD35C
-#define POLY_MASK_31 0x7A5BC2E3
 
 #define ChildLeft(x) (x << 1 | 1)
 #define ChildRight(x) ((x + 1) << 1)
@@ -18,7 +16,7 @@
 
 // Heap data structure (max heap)
 class Heap {
-    	const uint64_t *activity; // Pointer to activity database
+    	const double *activity; // Pointer to activity database
     	std::vector<int> heap; // Index of activity[x]
     	std::vector<int> pos; // Actual position of heap
 
@@ -57,7 +55,7 @@ class Heap {
     	}
 
 public:
-    	void initialize( const uint64_t *s ) {
+    	void initialize( const double *s ) {
 		activity = s;
 	}
 
@@ -119,46 +117,54 @@ public:
 // Solver
 class Solver {
 public:
-    	std::vector<int> learnt,                        // The index of the learnt clauses
-                         trail,                         // Save the assigned literal sequence(phase saving)
-                         decVarInTrail,                 // Save the decision variables' position in trail(phase saving)
-                         reduceMap;                     // Data structure for reduce
+    	std::vector<int> learnt,			// The clause indices of the learnt clauses
+                         trail,				// Save the assigned literal sequence
+                         decVarInTrail,                 // Save the decision variables' position in trail
+                         reduceMap;                     // Auxiliary data structure for clause management
     	std::vector<Clause> clauseDB;                   // Clause database
     	std::vector<WL> *watched_literals;              // A mapping from literal to clauses
     	
 	int vars, clauses, origin_clauses, conflicts;   // The number of variables, clauses, and conflicts
-	int decides, propagations;			// The number of decides and propagations
-    	int restarts, rephases, reduces;                // Parameters for restart, rephase, and reduce
+	int decides, unitPropagations;			// The number of decides and unit propagations
+	int bcpFunctionCalls;				// The number of BCP function calls
+    	int lbdResets, rephases, reduces;                // Parameters for LBD reset, soft rephase, and reduce
     	int rephase_inc, rephase_limit, reduce_limit;   // Parameters for rephase and reduce
+    	int reductionRuns;
+	long long deletedClauses, minimizedLiterals;
     	int threshold;                                  // A threshold for updating the local_best phase
     	int propagated;                                 // The number of propagted literals in trail
-    	int time_stamp;                                 // Parameter for conflict analyzation and LBD calculation   
+    	int time_stamp;                                 // Parameter for conflict analyzation and LBD calculation
    
     	int lbd_queue[50],                              // Circled queue saved the recent 50 LBDs
             lbd_queue_size,                             // The number of LBDs in this queue
             lbd_queue_pos;                              // The position to save the next LBD
-    	int fast_lbd_sum, slow_lbd_sum;			// Sum of the global and recent 50 LBDs
+    	double fast_lbd_sum, slow_lbd_sum;		// Sum of the global and recent 50 LBDs
 
-	int8_t *value,					// The variable assignment (1:True; -1:False; 0:Undefine)
-	       *local_best,				// A pahse with a local deepest trail
+    	int8_t *value,					// The variable assignement (1:True; -1:False; 0:Undefine)
+	       *local_best,				// A phase with a local deepest trail
 	       *saved;					// Phase saving
         int *reason,                                    // The index of the clause that implies the variable assignment
             *level,                                     // The decision level of a variable      
             *mark;                                      // Parameter for conflict analyzation
 
-    	uint64_t *activity;				// The variables' score for VSIDS
+    	double *activity;				// The variables' score for VSIDS
+	double var_inc, var_decay;			// Parameter for VSIDS
     	Heap vsids;					// Heap to select variable
 
+	double processTimeFinal;			// Total elapsed time
+	double propagaTimeFinal;			// Propagation elapsed time
+	double maxBCPTime;				// Maximum elapsed time of BCP
+	
 	void initialize();                                        // Allocate memory and initialize the values 
     	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
 	int  add_clause( std::vector<int> &c );                   // Add new clause to clause database
 	int  propagate();                                         // BCP (Boolean Contraint Propagation)
     	int  parse( char *filename );                             // Read CNF file
 	int  decide();                                            // Pick decision variable based on VSIDS
-	void update_score( int var, uint64_t amount );		  // Update activity
+	void update_score( int var, double coeff );		  // Update activity
     	int  analyze( int cref, int &backtrack_level, int &lbd ); // Conflict analysis
 	void backtrack( int backtrack_level );                    // Backtracking
-    	void restart();                                           // Do restart
+    	void resetRecentLBD();                                           // Reset recent LBD statistics without backtracking
     	void rephase();                                           // Do rephase
     	void reduce();                                            // Do reduce
 	int  solve();                                             // Solver
@@ -167,9 +173,6 @@ public:
 
 
 // Etc
-// rand() in stdlib
-uint32_t shift_lfsr( uint32_t *lfsr, uint32_t polynomial_mask );
-uint32_t rand_generator();
 // Additional funcs for reading CNF file
 uint8_t *read_whitespace( uint8_t *p );
 uint8_t *read_until_new_line( uint8_t *p );
