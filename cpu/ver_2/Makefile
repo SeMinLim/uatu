@@ -30,7 +30,7 @@ $(PROFILE_TARGET): $(SOURCES) $(HEADERS) | obj
 $(DEBUG_TARGET): $(SOURCES) $(HEADERS) | obj
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS_COMMON) $(CXXFLAGS_DEBUG) -DUATU_PROFILE_BCP=1 $(SOURCES) $(LDLIBS) -o $@
 
-CNF ?= ../../benchmark/benchmark1.cnf
+CNF ?= ../../benchmark/sample/cnf/benchmark1.cnf
 TIMEOUT ?= 1000
 
 run: $(TARGET)
