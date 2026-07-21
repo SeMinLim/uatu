@@ -1,16 +1,18 @@
 name: Delete temporary ver3 branch
 
 on:
-  push:
-    branches:
-      - main
+  pull_request_target:
+    types:
+      - closed
 
 permissions:
   contents: write
 
 jobs:
   delete-branch:
-    if: github.event.head_commit.message == 'chore: remove temporary ver3 branch'
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'agent/add-ver3-clause-retention'
     runs-on: ubuntu-latest
     steps:
       - name: Delete temporary branch
