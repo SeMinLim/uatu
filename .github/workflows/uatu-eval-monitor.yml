@@ -30,3 +30,5 @@ jobs:
           git add evaluation/actions-runs.csv
           git commit -m 'eval: record workflow status'
           git push
+
+# Monitor refresh 2
