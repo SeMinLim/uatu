@@ -1,4 +1,4 @@
-name: Uatu Candidate Heuristic Screening
+name: Uatu Fast Candidate Screening
 
 on:
   push:
@@ -17,17 +17,13 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-24.04
-    outputs:
-      indices: ${{ steps.matrix.outputs.indices }}
     steps:
-      - name: Build 20-instance tuning subset
-        id: matrix
+      - name: Build deterministic eight-instance tuning manifest
         run: |
           set -euo pipefail
           curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dsat%20and%20track%3Dmain_2025' -o sat.uri
           curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dunsat%20and%20track%3Dmain_2025' -o unsat.uri
           python3 - <<'PY'
-          import csv
           from pathlib import Path
 
           def read_urls(path):
@@ -35,273 +31,142 @@ jobs:
                              if line.strip().startswith('http')})
 
           def spread(values, count):
-              return [values[round(i * (len(values) - 1) / (count - 1))]
-                      for i in range(count)]
+              if len(values) < count:
+                  raise SystemExit(f'not enough instances: {len(values)} < {count}')
+              if count == 1:
+                  return [values[len(values) // 2]]
+              indices = [round(i * (len(values) - 1) / (count - 1)) for i in range(count)]
+              return [values[i] for i in indices]
 
-          selected = [('sat', url) for url in spread(read_urls('sat.uri'), 10)]
-          selected += [('unsat', url) for url in spread(read_urls('unsat.uri'), 10)]
-          selected.sort(key=lambda item: item[1])
-          with open('subset20.csv', 'w', newline='') as output:
-              writer = csv.writer(output)
-              writer.writerow(['index', 'expected', 'url'])
-              for index, (expected, url) in enumerate(selected):
-                  writer.writerow([index, expected, url])
+          rows = []
+          for status, path in [('sat', 'sat.uri'), ('unsat', 'unsat.uri')]:
+              for url in spread(read_urls(path), 4):
+                  rows.append((status, url))
+
+          with open('manifest.csv', 'w') as output:
+              output.write('index,status,url\n')
+              for index, (status, url) in enumerate(rows):
+                  output.write(f'{index},{status},{url}\n')
           PY
-          echo 'indices=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]' >> "$GITHUB_OUTPUT"
-
       - uses: actions/upload-artifact@v4
         with:
-          name: candidate-subset20
-          path: subset20.csv
+          name: fast-screen-manifest
+          path: manifest.csv
           retention-days: 1
 
   screen:
     needs: prepare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 55
     strategy:
       fail-fast: false
-      max-parallel: 20
+      max-parallel: 8
       matrix:
-        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+        index: [0, 1, 2, 3, 4, 5, 6, 7]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
-          name: candidate-subset20
-
+          name: fast-screen-manifest
       - name: Install tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y minisat xz-utils
-
-      - name: Build Uatu candidates
+          sudo apt-get update -qq
+          sudo apt-get install -y minisat xz-utils time
+      - name: Build Uatu variants
         run: |
           set -euo pipefail
-          mkdir -p variants bin
-          configs=(ver3 decay_095 no_backtrack decay_no_backtrack recursive_32 recursive_64 decay_recursive_32 decay_no_backtrack_recursive_32)
-          for config in "${configs[@]}"; do
-              cp -r cpu/ver_3 "variants/${config}"
-              CONFIG="$config" python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          config = os.environ['CONFIG']
-          root = Path('variants') / config
-          header_path = root / 'solver.h'
-          source_path = root / 'solver.cpp'
-          header = header_path.read_text()
-          source = source_path.read_text()
-
-          def replace_once(text, old, new, label):
-              if old not in text:
-                  raise SystemExit(f'{label} patch point not found for {config}')
-              return text.replace(old, new, 1)
-
-          if 'decay' in config:
-              source = replace_once(source,
-                                    '        var_decay = 0.8;',
-                                    '        var_decay = 0.95;',
-                                    'VSIDS decay')
-
-          if 'no_backtrack' in config:
-              source = replace_once(source,
-                                    '        // The only heuristic that performs a root backtrack.\n        backtrack(0);\n',
-                                    '        // Preserve the current search trail while reducing the clause database.\n',
-                                    'search-preserving reduction')
-
-          if 'recursive_32' in config or config == 'recursive_32':
-              budget_value = 32
-          elif config == 'recursive_64':
-              budget_value = 64
-          else:
-              budget_value = 0
-
-          if budget_value:
-              header = replace_once(
-                  header,
-                  '        int *reason,                                    // The index of the clause that implies the variable assignment\n            *level,                                     // The decision level of a variable\n            *mark;                                      // Parameter for conflict analysis\n\tunsigned int *lbdMark;',
-                  '        int *reason,                                    // The index of the clause that implies the variable assignment\n            *level,                                     // The decision level of a variable\n            *mark,                                      // Parameter for conflict analysis\n            *minMark;                                   // Marks for recursive minimization\n\tunsigned char *minState;                         // Cached recursive-minimization result\n\tunsigned int *lbdMark;',
-                  'recursive metadata arrays')
-              header = replace_once(
-                  header,
-                  '\tunsigned int lbdStamp;',
-                  '\tunsigned int lbdStamp;\n\tint minStamp, minimizationBudget;',
-                  'recursive metadata state')
-              header = replace_once(
-                  header,
-                  '\tvoid updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD\n    \tint  analyze',
-                  '\tvoid updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD\n\tbool recursiveRedundant( int var, int membershipStamp, int &budget );\n    \tint  analyze',
-                  'recursive method declaration')
-
-              source = replace_once(
-                  source,
-                  '        mark = new int[vars + 1];\n        lbdMark = new unsigned int[vars + 1];',
-                  '        mark = new int[vars + 1];\n        minMark = new int[vars + 1];\n        minState = new unsigned char[vars + 1];\n        lbdMark = new unsigned int[vars + 1];',
-                  'recursive allocation')
-              source = replace_once(
-                  source,
-                  '        lbdStamp = 0;\n        fast_lbd_sum',
-                  f'        lbdStamp = 0;\n        minStamp = 0;\n        minimizationBudget = {budget_value};\n        fast_lbd_sum',
-                  'recursive state initialization')
-              source = replace_once(
-                  source,
-                  '        lbdMark[0] = 0;\n        for ( int i = 1; i <= vars; i ++ ) {\n                value[i] = local_best[i] = saved[i] = 0;\n                reason[i] = level[i] = mark[i] = 0;\n                lbdMark[i] = 0;',
-                  '        lbdMark[0] = 0;\n        minMark[0] = 0;\n        minState[0] = 0;\n        for ( int i = 1; i <= vars; i ++ ) {\n                value[i] = local_best[i] = saved[i] = 0;\n                reason[i] = level[i] = mark[i] = minMark[i] = 0;\n                minState[i] = 0;\n                lbdMark[i] = 0;',
-                  'recursive array initialization')
-
-              helper = r'''
-// Check whether a variable is recursively implied by the current learnt clause
-bool Solver::recursiveRedundant( int variable, int membershipStamp, int &budget ) {
-        const int reasonClause = reason[variable];
-        if ( reasonClause < 0 ) return false;
-
-        const Clause &reasonData = clauseDB[reasonClause];
-        for ( int literal : reasonData.literals ) {
-                const int reasonVariable = abs(literal);
-                if ( reasonVariable == variable || level[reasonVariable] == 0 ) continue;
-                if ( mark[reasonVariable] == membershipStamp ) continue;
-
-                if ( minMark[reasonVariable] == minStamp ) {
-                        if ( minState[reasonVariable] == 1 ) continue;
-                        return false;
-                }
-
-                if ( budget == 0 ) return false;
-                budget --;
-                minMark[reasonVariable] = minStamp;
-                if ( recursiveRedundant(reasonVariable, membershipStamp, budget) ) {
-                        minState[reasonVariable] = 1;
-                } else {
-                        minState[reasonVariable] = 2;
-                        return false;
-                }
-        }
-
-        return true;
-}
-
-'''
-              source = replace_once(source,
-                                    '// Conflict analysis\nint Solver::analyze',
-                                    helper + '// Conflict analysis\nint Solver::analyze',
-                                    'recursive helper insertion')
-
-              start = source.index('        // Non-recursive, one-step reason minimization.')
-              end = source.index('\n        ++time_stamp;\n        lbd = 0;', start)
-              block = r'''        // Budgeted recursive reason minimization.
-        if ( learnt.size() > 1 ) {
-                ++time_stamp;
-                const int membershipStamp = time_stamp;
-                for ( int literal : learnt ) mark[abs(literal)] = membershipStamp;
-
-                minStamp ++;
-                int remainingBudget = minimizationBudget;
-                int out = 1;
-                for ( int i = 1; i < static_cast<int>(learnt.size()); i ++ ) {
-                        const int literal = learnt[i];
-                        const int variable = abs(literal);
-                        bool removable = reason[variable] >= 0;
-
-                        if ( removable ) {
-                                minMark[variable] = minStamp;
-                                removable = recursiveRedundant(variable, membershipStamp,
-                                                               remainingBudget);
-                                minState[variable] = removable ? 1 : 2;
-                        }
-
-                        if ( removable ) ++minimizedLiterals;
-                        else learnt[out++] = literal;
-                }
-                learnt.resize(out);
-        }
-'''
-              source = source[:start] + block + source[end:]
-
-          header_path.write_text(header)
-          source_path.write_text(source)
-          PY
-              make -C "variants/${config}" clean all
-              cp "variants/${config}/obj/uatu_solver" "bin/${config}"
-          done
-
-      - name: Download benchmark once
+          make -C cpu/ver_3 clean all
+          python3 evaluation/uatu_candidate_patch.py cpu/ver_3 candidate
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -O3 -DNDEBUG -march=native \
+              -DUATU_PROFILE_BCP=0 -DUATU_REDUCE_BACKTRACK=1 \
+              candidate/solver.cpp candidate/main.cpp -o candidate/uatu_bt
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -O3 -DNDEBUG -march=native \
+              -DUATU_PROFILE_BCP=0 -DUATU_REDUCE_BACKTRACK=0 \
+              candidate/solver.cpp candidate/main.cpp -o candidate/uatu_nobt
+      - name: Run candidate race
         env:
           INDEX: ${{ matrix.index }}
         run: |
           set -euo pipefail
+          row="$(awk -F, -v idx="$INDEX" 'NR > 1 && $1 == idx { print; exit }' manifest.csv)"
+          IFS=, read -r index expected url <<< "$row"
           mkdir -p work
-          python3 - <<'PY' > selected.env
-          import csv
-          import os
-          import shlex
-          with open('subset20.csv', newline='') as source:
-              row = list(csv.DictReader(source))[int(os.environ['INDEX'])]
-          print('EXPECTED=' + shlex.quote(row['expected']))
-          print('URL=' + shlex.quote(row['url']))
-          PY
-          source selected.env
-          printf '%s\n' "$EXPECTED" > work/expected
-          printf '%s\n' "$URL" > work/url
-          curl -fL --retry 6 --retry-delay 5 "$URL" -o work/instance.cnf.xz
-          xz -t work/instance.cnf.xz
+          curl -fL --retry 5 --retry-delay 3 "$url" -o work/instance.cnf.xz
           xz -dc work/instance.cnf.xz > work/instance.cnf
-
-      - name: Run candidates
-        env:
-          INDEX: ${{ matrix.index }}
-          TIMEOUT_SEC: 300
-        run: |
-          set -euo pipefail
-          mkdir -p result logs
-          EXPECTED="$(cat work/expected)"
-          URL="$(cat work/url)"
-          printf 'index,expected,config,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/results.csv
+          hash="$(printf '%s' "$url" | sed -E 's#.*file/([0-9a-f]+).*#\1#')"
+          printf 'index,status,hash,solver,result,correct,wall,user,sys,rss_kb,exit_code\n' > "result-${INDEX}.csv"
 
           run_one() {
-              local config="$1"
+              local solver_name="$1"
               local command="$2"
-              local output_file="logs/${config}.out"
-              local time_file="logs/${config}.time"
-
+              rm -f work/output.txt work/time.txt work/minisat.model
               set +e
-              /usr/bin/time -q -f '%e,%U,%S,%M' -o "$time_file" \
-                  timeout --signal=TERM --kill-after=5s "${TIMEOUT_SEC}s" \
-                  bash -lc "$command" > "$output_file" 2>&1
+              /usr/bin/time -f '%e,%U,%S,%M' -o work/time.txt \
+                  timeout --signal=TERM --kill-after=5s 120s bash -lc "$command" \
+                  > work/output.txt 2>&1
               local rc=$?
               set -e
 
-              local result='error'
-              if grep -q 'UNSATISFIABLE' "$output_file"; then result='unsat';
-              elif grep -q 'SATISFIABLE' "$output_file"; then result='sat';
-              elif [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then result='timeout'; fi
+              local result='TIMEOUT'
+              if grep -q 'UNSATISFIABLE' work/output.txt; then
+                  result='UNSAT'
+              elif grep -q 'SATISFIABLE' work/output.txt; then
+                  result='SAT'
+              elif [[ $rc -ne 124 && $rc -ne 137 ]]; then
+                  result='ERROR'
+              fi
 
               local correct=0
-              if [[ "$result" == "$EXPECTED" ]]; then correct=1; fi
-              local wall=600 user=0 sys=0 rss=0
-              if [[ -s "$time_file" ]]; then IFS=',' read -r wall user sys rss < "$time_file" || true; fi
+              if [[ "${result,,}" == "$expected" ]]; then correct=1; fi
+              local wall=120 user=120 sys=0 rss=0
+              if [[ -s work/time.txt ]]; then
+                  IFS=, read -r wall user sys rss < work/time.txt || true
+              fi
               printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-                  "$INDEX" "$EXPECTED" "$config" "$result" "$correct" \
-                  "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/results.csv
+                  "$index" "$expected" "$hash" "$solver_name" "$result" "$correct" \
+                  "$wall" "$user" "$sys" "$rss" "$rc" >> "result-${INDEX}.csv"
           }
 
-          configs=(minisat ver3 decay_095 no_backtrack decay_no_backtrack recursive_32 recursive_64 decay_recursive_32 decay_no_backtrack_recursive_32)
-          shift_count=$((INDEX % ${#configs[@]}))
-          ordered=("${configs[@]:shift_count}" "${configs[@]:0:shift_count}")
-          for config in "${ordered[@]}"; do
-              if [[ "$config" == 'minisat' ]]; then
-                  command='minisat -verb=0 work/instance.cnf /dev/null'
-              else
-                  command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} bin/${config} work/instance.cnf"
-              fi
-              run_one "$config" "$command"
+          configs=(
+              minisat
+              ver3
+              decay_095
+              no_backtrack
+              recursive_32
+              decay_no_backtrack
+              decay_no_backtrack_recursive_32
+          )
+          offset=$(( INDEX % ${#configs[@]} ))
+          for (( step=0; step<${#configs[@]}; step++ )); do
+              config="${configs[$(( (offset + step) % ${#configs[@]} ))]}"
+              case "$config" in
+                  minisat)
+                      run_one minisat "minisat -verb=0 work/instance.cnf work/minisat.model"
+                      ;;
+                  ver3)
+                      run_one ver3 "UATU_TIMEOUT_SEC=120 cpu/ver_3/obj/uatu_solver work/instance.cnf"
+                      ;;
+                  decay_095)
+                      run_one decay_095 "UATU_TIMEOUT_SEC=120 UATU_VAR_DECAY=0.95 candidate/uatu_bt work/instance.cnf"
+                      ;;
+                  no_backtrack)
+                      run_one no_backtrack "UATU_TIMEOUT_SEC=120 candidate/uatu_nobt work/instance.cnf"
+                      ;;
+                  recursive_32)
+                      run_one recursive_32 "UATU_TIMEOUT_SEC=120 UATU_RECURSIVE_MIN_BUDGET=32 candidate/uatu_bt work/instance.cnf"
+                      ;;
+                  decay_no_backtrack)
+                      run_one decay_no_backtrack "UATU_TIMEOUT_SEC=120 UATU_VAR_DECAY=0.95 candidate/uatu_nobt work/instance.cnf"
+                      ;;
+                  decay_no_backtrack_recursive_32)
+                      run_one decay_no_backtrack_recursive_32 "UATU_TIMEOUT_SEC=120 UATU_VAR_DECAY=0.95 UATU_RECURSIVE_MIN_BUDGET=32 candidate/uatu_nobt work/instance.cnf"
+                      ;;
+              esac
           done
-
       - uses: actions/upload-artifact@v4
         with:
-          name: candidate-${{ matrix.index }}
-          path: result/results.csv
+          name: fast-screen-${{ matrix.index }}
+          path: result-${{ matrix.index }}.csv
           retention-days: 1
 
   aggregate:
@@ -311,39 +176,64 @@ bool Solver::recursiveRedundant( int variable, int membershipStamp, int &budget 
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: candidate-*
-          path: downloaded
-      - name: Aggregate results
+          pattern: fast-screen-*
+          path: raw
+          merge-multiple: true
+      - name: Summarize screening
         run: |
           mkdir -p evaluation
           python3 - <<'PY'
           import csv
+          from collections import defaultdict
           from pathlib import Path
+
           rows = []
-          for path in Path('downloaded').glob('candidate-*/results.csv'):
-              with path.open(newline='') as source:
-                  rows.extend(csv.DictReader(source))
-          rows.sort(key=lambda row: (row['config'], int(row['index'])))
-          if len(rows) != 180:
-              raise SystemExit(f'expected 180 rows, found {len(rows)}')
-          with Path('evaluation/satcomp2025_subset20_candidates.csv').open('w', newline='') as output:
-              writer = csv.DictWriter(output, fieldnames=list(rows[0])); writer.writeheader(); writer.writerows(rows)
-          timeout = 300.0; summary = []
-          for config in sorted({row['config'] for row in rows}):
-              selected = [row for row in rows if row['config'] == config]
-              solved = [row for row in selected if row['correct'] == '1']
-              par2 = sum(min(float(row['wall_sec']), timeout) if row['correct'] == '1' else 2 * timeout for row in selected) / len(selected)
-              summary.append((config, len(solved), sum(row['result']=='sat' and row['correct']=='1' for row in selected), sum(row['result']=='unsat' and row['correct']=='1' for row in selected), par2, sum(float(row['wall_sec']) for row in solved), max((int(row['rss_kb']) for row in selected if row['rss_kb'].isdigit()), default=0), sum(row['result']=='error' for row in selected)))
-          summary.sort(key=lambda item: (-item[1], item[4], item[5]))
-          lines = ['# Uatu Candidate Heuristic Screening', '', '- Instances: 20 deterministic SAT Competition 2025 samples (10 SAT, 10 UNSAT)', '- Timeout: 300 seconds per configuration and instance', '', '| Rank | Configuration | Solved | SAT | UNSAT | PAR-2 (s) | Sum solved time (s) | Peak RSS (KB) | Errors |', '|---:|---|---:|---:|---:|---:|---:|---:|---:|']
-          for rank, (config, solved, sat, unsat, par2, total, rss, errors) in enumerate(summary, 1): lines.append(f'| {rank} | {config} | {solved} | {sat} | {unsat} | {par2:.3f} | {total:.3f} | {rss} | {errors} |')
-          Path('evaluation/satcomp2025_subset20_candidates.md').write_text('\n'.join(lines) + '\n')
+          for path in sorted(Path('raw').glob('result-*.csv')):
+              with path.open() as stream:
+                  rows.extend(csv.DictReader(stream))
+          if len(rows) != 56:
+              raise SystemExit(f'expected 56 rows, got {len(rows)}')
+
+          rows.sort(key=lambda row: (int(row['index']), row['solver']))
+          output = Path('evaluation/satcomp2025_subset8_candidates.csv')
+          with output.open('w', newline='') as stream:
+              writer = csv.DictWriter(stream, fieldnames=rows[0].keys())
+              writer.writeheader()
+              writer.writerows(rows)
+
+          data = defaultdict(lambda: {'solved': 0, 'wrong': 0, 'sat': 0, 'unsat': 0, 'par2': 0.0})
+          for row in rows:
+              entry = data[row['solver']]
+              solved = row['correct'] == '1'
+              if solved:
+                  entry['solved'] += 1
+                  entry[row['status']] += 1
+                  entry['par2'] += min(float(row['wall']), 120.0)
+              else:
+                  if row['result'] not in ('TIMEOUT', 'ERROR'):
+                      entry['wrong'] += 1
+                  entry['par2'] += 240.0
+
+          ranking = sorted(data.items(), key=lambda item: (item[1]['wrong'], -item[1]['solved'], item[1]['par2']))
+          lines = [
+              '# SAT Competition 2025 Fast Candidate Screening',
+              '',
+              '- Instances: 8 deterministic tuning instances (4 SAT, 4 UNSAT)',
+              '- Timeout: 120 seconds per configuration',
+              '- Ranking: zero wrong answers, solved count, then PAR-2',
+              '',
+              '| Rank | Solver | Solved | SAT | UNSAT | Wrong | PAR-2 |',
+              '|---:|---|---:|---:|---:|---:|---:|',
+          ]
+          for rank, (solver, entry) in enumerate(ranking, 1):
+              lines.append(f"| {rank} | `{solver}` | {entry['solved']} | {entry['sat']} | {entry['unsat']} | {entry['wrong']} | {entry['par2']:.2f} |")
+          Path('evaluation/satcomp2025_subset8_candidates.md').write_text('\n'.join(lines) + '\n')
           PY
-      - name: Commit results
+      - name: Commit screening result
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git pull --rebase
-          git add evaluation/satcomp2025_subset20_candidates.csv evaluation/satcomp2025_subset20_candidates.md
-          git commit -m 'eval: add candidate heuristic screening results'
+          git add evaluation/satcomp2025_subset8_candidates.csv evaluation/satcomp2025_subset8_candidates.md
+          git commit -m 'eval: record fast candidate screening'
           git push
