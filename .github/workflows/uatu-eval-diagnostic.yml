@@ -1,0 +1,65 @@
+name: Uatu Evaluation Diagnostic
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/uatu-eval-diagnostic.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Diagnose benchmark access
+        run: |
+          set +e
+          mkdir -p evaluation
+          {
+            echo '# Evaluation Diagnostic'
+            echo
+            echo '## SAT manifest'
+            curl -L -sS -w '\nHTTP=%{http_code}\n' \
+              'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dsat%20and%20track%3Dmain_2025' \
+              -o sat.uri
+            sat_rc=$?
+            echo "curl_rc=$sat_rc"
+            echo "bytes=$(wc -c < sat.uri 2>/dev/null || echo 0)"
+            echo "urls=$(grep -cE '^https?://' sat.uri 2>/dev/null || true)"
+            head -n 3 sat.uri 2>/dev/null || true
+            echo
+            echo '## UNSAT manifest'
+            curl -L -sS -w '\nHTTP=%{http_code}\n' \
+              'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dunsat%20and%20track%3Dmain_2025' \
+              -o unsat.uri
+            unsat_rc=$?
+            echo "curl_rc=$unsat_rc"
+            echo "bytes=$(wc -c < unsat.uri 2>/dev/null || echo 0)"
+            echo "urls=$(grep -cE '^https?://' unsat.uri 2>/dev/null || true)"
+            head -n 3 unsat.uri 2>/dev/null || true
+            echo
+            echo '## First benchmark access'
+            first_url=$(grep -m1 -E '^https?://' sat.uri 2>/dev/null || true)
+            echo "url=$first_url"
+            if [[ -n "$first_url" ]]; then
+              curl -fL --max-time 60 -o first.cnf.xz "$first_url"
+              echo "download_rc=$?"
+              echo "download_bytes=$(wc -c < first.cnf.xz 2>/dev/null || echo 0)"
+              xz -t first.cnf.xz
+              echo "xz_test_rc=$?"
+            fi
+          } > evaluation/actions-diagnostic.txt 2>&1
+
+      - name: Commit diagnostic
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add evaluation/actions-diagnostic.txt
+          git commit -m 'eval: record benchmark access diagnostic'
+          git push
