@@ -1,0 +1,316 @@
+name: Uatu Ver4 Evaluation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: uatu-ver4-evaluation
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+    steps:
+      - name: Create fixed SAT Competition 2025 subset
+        id: matrix
+        run: |
+          set -euo pipefail
+          cat > subset50.csv <<'EOF'
+          index,expected,url
+          0,sat,http://benchmark-database.de/file/00fd8ac9acd186a7a78a2c4d92f90de1
+          1,unsat,http://benchmark-database.de/file/0205e2dffaef93a90c239df31755f2e1
+          2,unsat,http://benchmark-database.de/file/0aa22564d00e9716519918d84b25c4a7
+          3,sat,http://benchmark-database.de/file/0c0430a68f147be18ab3fded07f30fdb
+          4,unsat,http://benchmark-database.de/file/16ff47a05b769ed6a04c7175cfc6da55
+          5,sat,http://benchmark-database.de/file/1753a71fefceb0250a75e67b610050a0
+          6,unsat,http://benchmark-database.de/file/1c30806c5aa9cd54bf823c20fa078243
+          7,sat,http://benchmark-database.de/file/22df1827e3253fc824cc7ce806d75e0a
+          8,unsat,http://benchmark-database.de/file/27cb3a6ca772613c5998d7f78a55ba45
+          9,sat,http://benchmark-database.de/file/2d0c041c0fe72dc32527bfbf34f63e61
+          10,unsat,http://benchmark-database.de/file/3197b65ef50328394a0c9e73281d7122
+          11,sat,http://benchmark-database.de/file/3bfa92996634d2ddc6c0568bba9a0f99
+          12,unsat,http://benchmark-database.de/file/3c129545f090ef08b6ef89a2903ff83e
+          13,sat,http://benchmark-database.de/file/465795fa2641c616ce76de8501672a19
+          14,unsat,http://benchmark-database.de/file/47f5872181a581dff34eb33123fe3242
+          15,sat,http://benchmark-database.de/file/4d6e18e506b7e62d3f32cc775219be24
+          16,unsat,http://benchmark-database.de/file/5314fd6ccb53b6f6af49a594ea68a273
+          17,sat,http://benchmark-database.de/file/59fc779feee4390b57502814d424e0d6
+          18,unsat,http://benchmark-database.de/file/5c24cfeff639fefdead9a5641f65fa22
+          19,sat,http://benchmark-database.de/file/6415a71364351c0a521fdee510bc2589
+          20,unsat,http://benchmark-database.de/file/65f7145996bbec02b90bd0fa64a20502
+          21,sat,http://benchmark-database.de/file/69f6dd335626a9b71bfc6f2332f52b9d
+          22,unsat,http://benchmark-database.de/file/6fab31665147f538da92dc16c3a239ad
+          23,sat,http://benchmark-database.de/file/753757e87d34bd1075c413d801bf99b8
+          24,unsat,http://benchmark-database.de/file/7bdf3e5401cc263951003b569bcd689c
+          25,sat,http://benchmark-database.de/file/7e58b502cc9dbef5f76d5161fb9a09b2
+          26,sat,http://benchmark-database.de/file/88849daabda2e712f659c6edbc142229
+          27,unsat,http://benchmark-database.de/file/8b267f95678c90b2179944de7233b090
+          28,sat,http://benchmark-database.de/file/931621d9964e9d0cd1c4001822015c92
+          29,unsat,http://benchmark-database.de/file/965bc4f6691b2e5f7388aaa9ba68f768
+          30,unsat,http://benchmark-database.de/file/99718c1729a8de3347a9946f1836421d
+          31,sat,http://benchmark-database.de/file/9b998be0c639d06988c4902eb125c0b7
+          32,unsat,http://benchmark-database.de/file/a1fdd60d2570f47fb14956ac9e96951f
+          33,sat,http://benchmark-database.de/file/a2ca167a8fdbf165f40b5d6dee94b040
+          34,unsat,http://benchmark-database.de/file/ad69e0a0880cd377e26260f7e4bc6d51
+          35,sat,http://benchmark-database.de/file/b3d3680b3287a989ce61a6db1054efd2
+          36,sat,http://benchmark-database.de/file/c0074020a48535e6062421cea2850dd0
+          37,unsat,http://benchmark-database.de/file/c0e828fb967fc4f0935cf06c6a6b1055
+          38,sat,http://benchmark-database.de/file/ca3c65a863526793968fc30618a42709
+          39,sat,http://benchmark-database.de/file/d2af3fde615d7c4d4a4574fc8839970e
+          40,unsat,http://benchmark-database.de/file/d3e4e0f01836bb359725c6aa5072afce
+          41,unsat,http://benchmark-database.de/file/d88a8a62342be0ef04bd3b429f311352
+          42,unsat,http://benchmark-database.de/file/de8988028668791f35a7b9f94353b5b9
+          43,sat,http://benchmark-database.de/file/e318e2ac78b473091c3c2197afd7fc98
+          44,unsat,http://benchmark-database.de/file/ebbda8d90dfd9b6500bf932f952907a6
+          45,sat,http://benchmark-database.de/file/ed6d842f96d10f3400bce251f9e95bfb
+          46,sat,http://benchmark-database.de/file/f33a6163305d6559043b7438a692dea9
+          47,unsat,http://benchmark-database.de/file/f6a085f3c728e53f57542e62df20e56b
+          48,sat,http://benchmark-database.de/file/fae6cf26f3da1e7d8fc4926a9ca86b61
+          49,unsat,http://benchmark-database.de/file/fea0f926e766ccba7c7dc261084ecbd0
+          EOF
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print('indices=' + json.dumps(list(range(50)), separators=(',', ':')))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-subset50
+          path: subset50.csv
+          retention-days: 1
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-subset50
+
+      - name: Install tools and build solvers
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+          make -C cpu/ver_3 clean all
+          cat evaluation/ver4-payload/part* | base64 -d > ver4-src.tar.gz
+          mkdir candidate
+          tar -xzf ver4-src.tar.gz -C candidate --strip-components=1
+          make -C candidate clean all
+
+      - name: Download benchmark
+        env:
+          INDEX: ${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          python3 - <<'PY' > work/selected.env
+          import csv, os, shlex
+          with open('subset50.csv', newline='') as source:
+              row = list(csv.DictReader(source))[int(os.environ['INDEX'])]
+          print('EXPECTED=' + shlex.quote(row['expected']))
+          print('URL=' + shlex.quote(row['url']))
+          PY
+          source work/selected.env
+          printf '%s\n' "$EXPECTED" > work/expected
+          printf '%s\n' "$URL" > work/url
+          curl -fL --retry 8 --retry-delay 5 "$URL" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run MiniSAT, Ver3, and Ver4
+        env:
+          INDEX: ${{ matrix.index }}
+          TIMEOUT_SEC: 1000
+        run: |
+          set -euo pipefail
+          EXPECTED="$(cat work/expected)"
+          URL="$(cat work/url)"
+          printf 'index,expected,solver,result,correct,model_valid,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/results.csv
+
+          verify_model() {
+              local solver="$1" output="$2" model_file="$3"
+              python3 - "$solver" "$output" "$model_file" work/instance.cnf <<'PY'
+          import sys
+          solver, output_path, model_path, cnf_path = sys.argv[1:]
+          model = []
+          if solver == 'minisat':
+              try:
+                  lines = open(model_path).read().splitlines()
+              except FileNotFoundError:
+                  raise SystemExit(1)
+              for line in lines[1:]:
+                  model.extend(int(x) for x in line.split() if x != '0')
+          else:
+              for line in open(output_path, errors='ignore'):
+                  fields = line.split()
+                  if fields and fields[-1] == '0':
+                      try:
+                          values = [int(x) for x in fields]
+                      except ValueError:
+                          continue
+                      if len(values) > 2:
+                          model = values[:-1]
+                          break
+          assignment = {abs(x): x > 0 for x in model if x}
+          if not assignment:
+              raise SystemExit(1)
+          clause = []
+          with open(cnf_path, errors='ignore') as source:
+              for line in source:
+                  if not line or line[0] in 'cp%0':
+                      continue
+                  for token in line.split():
+                      lit = int(token)
+                      if lit == 0:
+                          if not any(assignment.get(abs(q), False) == (q > 0) for q in clause):
+                              raise SystemExit(1)
+                          clause.clear()
+                      else:
+                          clause.append(lit)
+          raise SystemExit(0)
+          PY
+          }
+
+          run_one() {
+              local solver="$1" command="$2"
+              local output="work/${solver}.out"
+              local timing="work/${solver}.time"
+              local model="work/${solver}.model"
+              set +e
+              /usr/bin/time -q -f '%e,%U,%S,%M' -o "$timing" \
+                  timeout --signal=TERM --kill-after=5s "$((TIMEOUT_SEC + 10))s" \
+                  bash -lc "$command" > "$output" 2>&1
+              local rc=$?
+              set -e
+              local answer='error'
+              if grep -q 'UNSATISFIABLE' "$output"; then answer='unsat';
+              elif grep -q 'SATISFIABLE' "$output"; then answer='sat';
+              elif [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then answer='timeout'; fi
+              local model_valid=1
+              if [[ "$answer" == 'sat' ]]; then
+                  set +e
+                  verify_model "$solver" "$output" "$model"
+                  model_valid=$([[ $? -eq 0 ]] && echo 1 || echo 0)
+                  set -e
+              fi
+              local correct=0
+              if [[ "$answer" == "$EXPECTED" && $model_valid -eq 1 ]]; then correct=1; fi
+              local wall="$((TIMEOUT_SEC + 10))" user=0 sys=0 rss=0
+              if [[ -s "$timing" ]]; then IFS=',' read -r wall user sys rss < "$timing" || true; fi
+              printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                  "$INDEX" "$EXPECTED" "$solver" "$answer" "$correct" "$model_valid" \
+                  "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/results.csv
+          }
+
+          solvers=(minisat ver3 ver4)
+          shift_count=$((INDEX % 3))
+          ordered=("${solvers[@]:shift_count}" "${solvers[@]:0:shift_count}")
+          for solver in "${ordered[@]}"; do
+              case "$solver" in
+                  minisat) command="minisat -verb=0 -cpu-lim=${TIMEOUT_SEC} work/instance.cnf work/minisat.model" ;;
+                  ver3) command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_PRINT_MODEL=1 cpu/ver_3/obj/uatu_solver work/instance.cnf" ;;
+                  ver4) command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_PRINT_MODEL=1 UATU_BRANCHING=vsids UATU_DEFAULT_PHASE=-1 UATU_MINIMIZATION_BUDGET=64 candidate/obj/uatu_solver work/instance.cnf" ;;
+              esac
+              run_one "$solver" "$command"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-result-${{ matrix.index }}
+          path: result/results.csv
+          retention-days: 1
+
+  aggregate:
+    needs: evaluate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver4-result-*
+          path: downloaded
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-subset50
+          path: evaluation
+
+      - name: Aggregate and publish result
+        run: |
+          set -euo pipefail
+          mkdir -p evaluation
+          python3 - <<'PY'
+          import csv, json
+          from pathlib import Path
+          rows = []
+          for path in Path('downloaded').glob('ver4-result-*/results.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+          if len(rows) != 150:
+              raise SystemExit(f'expected 150 rows, found {len(rows)}')
+          rows.sort(key=lambda row: (row['solver'], int(row['index'])))
+          raw = Path('evaluation/ver4_iteration1_raw.csv')
+          with raw.open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader(); writer.writerows(rows)
+          timeout = 1000.0
+          summary = []
+          for solver in ('minisat', 'ver3', 'ver4'):
+              selected = [row for row in rows if row['solver'] == solver]
+              solved = [row for row in selected if row['correct'] == '1']
+              wrong = [row for row in selected if row['result'] in ('sat', 'unsat') and row['correct'] != '1']
+              par2 = sum(min(float(row['wall_sec']), timeout) if row['correct'] == '1' else 2.0 * timeout for row in selected) / 50.0
+              summary.append({
+                  'solver': solver,
+                  'solved': len(solved),
+                  'sat': sum(row['expected'] == 'sat' and row['correct'] == '1' for row in selected),
+                  'unsat': sum(row['expected'] == 'unsat' and row['correct'] == '1' for row in selected),
+                  'wrong': len(wrong),
+                  'par2': par2,
+                  'solved_time': sum(float(row['wall_sec']) for row in solved),
+                  'peak_rss_kb': max(int(float(row['rss_kb'])) for row in selected),
+              })
+          data = {row['solver']: row for row in summary}
+          mini, ver4 = data['minisat'], data['ver4']
+          beats = ver4['wrong'] == 0 and (ver4['solved'] > mini['solved'] or (ver4['solved'] == mini['solved'] and ver4['par2'] < mini['par2']))
+          decision = {'configuration': 'vsids-negative-recursive64-tiered-reduction', 'beats_minisat': beats, 'summary': summary}
+          Path('evaluation/ver4_iteration1_decision.json').write_text(json.dumps(decision, indent=2) + '\n')
+          lines = ['# Uatu Ver4 Evaluation', '', '- Dataset: fixed 50-instance SAT Competition 2025 subset', '- Composition: 25 SAT and 25 UNSAT', '- Timeout: 1,000 seconds per solver and instance', '- Ver4 configuration: VSIDS, negative default phase, recursive-minimization budget 64, dynamic LBD, learned-clause activity, tiered search-preserving reduction', '', '| Solver | Solved | SAT | UNSAT | Wrong | PAR-2 (s) | Solved time (s) | Peak RSS (KB) |', '|---|---:|---:|---:|---:|---:|---:|---:|']
+          for row in summary:
+              lines.append(f"| `{row['solver']}` | {row['solved']} | {row['sat']} | {row['unsat']} | {row['wrong']} | {row['par2']:.3f} | {row['solved_time']:.3f} | {row['peak_rss_kb']} |")
+          lines += ['', f"MiniSAT exceeded: **{'YES' if beats else 'NO'}**", '']
+          Path('evaluation/ver4_iteration1_report.md').write_text('\n'.join(lines))
+          PY
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add evaluation/ver4_iteration1_*.csv evaluation/ver4_iteration1_*.json evaluation/ver4_iteration1_*.md evaluation/subset50.csv
+          git commit -m 'eval: record Uatu ver_4 iteration 1'
+          git push
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-iteration1-results
+          path: |
+            evaluation/subset50.csv
+            evaluation/ver4_iteration1_raw.csv
+            evaluation/ver4_iteration1_decision.json
+            evaluation/ver4_iteration1_report.md
+          retention-days: 1
