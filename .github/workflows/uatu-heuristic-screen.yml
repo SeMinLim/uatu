@@ -1,4 +1,4 @@
-name: Uatu Heuristic Screening
+name: Uatu Low-Cost Heuristic Screening
 
 on:
   push:
@@ -28,7 +28,6 @@ jobs:
           curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dunsat%20and%20track%3Dmain_2025' -o unsat.uri
           python3 - <<'PY'
           import csv
-          import json
           from pathlib import Path
 
           def read_urls(path):
@@ -47,176 +46,174 @@ jobs:
               writer.writerow(['index', 'expected', 'url'])
               for index, (expected, url) in enumerate(selected):
                   writer.writerow([index, expected, url])
-          print(len(selected))
           PY
-          test "$(($(wc -l < subset20.csv) - 1))" -eq 20
           echo 'indices=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]' >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: subset20
+          name: low-cost-subset20
           path: subset20.csv
           retention-days: 1
 
   screen:
     needs: prepare
     runs-on: ubuntu-24.04
+    timeout-minutes: 35
     strategy:
       fail-fast: false
-      max-parallel: 100
+      max-parallel: 20
       matrix:
         index: ${{ fromJSON(needs.prepare.outputs.indices) }}
-        config:
-          - minisat
-          - ver3
-          - negative_phase
-          - decay_095
-          - negative_decay_095
-          - lbd_3
-          - lbd_6
-          - reduce_4096
-          - reduce_16384
-          - clause_decay_095
-          - clause_decay_099
-          - hard_lbd_reset
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: subset20
+          name: low-cost-subset20
 
       - name: Install tools
         run: |
           sudo apt-get update
           sudo apt-get install -y minisat xz-utils
 
-      - name: Prepare solver configuration
-        env:
-          CONFIG: ${{ matrix.config }}
+      - name: Build Uatu variants
         run: |
           set -euo pipefail
-          cp -r cpu/ver_3 work_solver
-          python3 - <<'PY'
+          mkdir -p variants bin
+          for config in ver3 negative_phase decay_095 negative_decay_095 lbd_3 lbd_6 reduce_4096 reduce_16384 hard_lbd_reset; do
+              cp -r cpu/ver_3 "variants/${config}"
+              CONFIG="$config" python3 - <<'PY'
           import os
           from pathlib import Path
 
           config = os.environ['CONFIG']
-          path = Path('work_solver/solver.cpp')
+          path = Path('variants') / config / 'solver.cpp'
           text = path.read_text()
 
-          if config in {'negative_phase', 'negative_decay_095'}:
-              old = "\tif ( saved[next] ) next *= saved[next];"
-              new = "\tif ( saved[next] ) next *= saved[next];\n\telse next = -next;"
+          def replace_once(old, new, label):
+              global text
               if old not in text:
-                  raise SystemExit('decision-phase patch point not found')
+                  raise SystemExit(f'{label} patch point not found for {config}')
               text = text.replace(old, new, 1)
+
+          if config in {'negative_phase', 'negative_decay_095'}:
+              replace_once("\tif ( saved[next] ) next *= saved[next];",
+                           "\tif ( saved[next] ) next *= saved[next];\n\telse next = -next;",
+                           'negative phase')
 
           if config in {'decay_095', 'negative_decay_095'}:
-              old = '        var_decay = 0.8;'
-              if old not in text:
-                  raise SystemExit('VSIDS decay patch point not found')
-              text = text.replace(old, '        var_decay = 0.95;', 1)
+              replace_once('        var_decay = 0.8;',
+                           '        var_decay = 0.95;',
+                           'VSIDS decay')
 
           if config == 'lbd_3':
-              old = 'clauseDB[i].lbd >= 5'
-              if old not in text:
-                  raise SystemExit('LBD threshold patch point not found')
-              text = text.replace(old, 'clauseDB[i].lbd >= 3', 1)
+              replace_once('clauseDB[i].lbd >= 5',
+                           'clauseDB[i].lbd >= 3',
+                           'LBD threshold')
 
           if config == 'lbd_6':
-              old = 'clauseDB[i].lbd >= 5'
-              if old not in text:
-                  raise SystemExit('LBD threshold patch point not found')
-              text = text.replace(old, 'clauseDB[i].lbd >= 6', 1)
+              replace_once('clauseDB[i].lbd >= 5',
+                           'clauseDB[i].lbd >= 6',
+                           'LBD threshold')
 
           if config == 'reduce_4096':
-              old = '        reduce_limit = 8192;'
-              if old not in text:
-                  raise SystemExit('reduce-limit patch point not found')
-              text = text.replace(old, '        reduce_limit = 4096;', 1)
+              replace_once('        reduce_limit = 8192;',
+                           '        reduce_limit = 4096;',
+                           'reduce limit')
 
           if config == 'reduce_16384':
-              old = '        reduce_limit = 8192;'
-              if old not in text:
-                  raise SystemExit('reduce-limit patch point not found')
-              text = text.replace(old, '        reduce_limit = 16384;', 1)
+              replace_once('        reduce_limit = 8192;',
+                           '        reduce_limit = 16384;',
+                           'reduce limit')
 
           if config == 'hard_lbd_reset':
-              old = '                        resetRecentLBD();'
-              new = '                        backtrack(0);\n                        resetRecentLBD();'
-              if old not in text:
-                  raise SystemExit('LBD reset patch point not found')
-              text = text.replace(old, new, 1)
+              replace_once('                        resetRecentLBD();',
+                           '                        backtrack(0);\n                        resetRecentLBD();',
+                           'hard LBD reset')
 
           path.write_text(text)
           PY
-          if [[ "$CONFIG" != 'minisat' ]]; then
-              make -C work_solver clean all
-          fi
+              make -C "variants/${config}" clean all
+              cp "variants/${config}/obj/uatu_solver" "bin/${config}"
+          done
 
-      - name: Run configuration
+      - name: Download benchmark once
         env:
           INDEX: ${{ matrix.index }}
-          CONFIG: ${{ matrix.config }}
-          TIMEOUT_SEC: 120
         run: |
           set -euo pipefail
-          mkdir -p work result
+          mkdir -p work
           python3 - <<'PY' > selected.env
           import csv
           import os
           import shlex
           with open('subset20.csv', newline='') as source:
-              rows = list(csv.DictReader(source))
-          row = rows[int(os.environ['INDEX'])]
+              row = list(csv.DictReader(source))[int(os.environ['INDEX'])]
           print('EXPECTED=' + shlex.quote(row['expected']))
           print('URL=' + shlex.quote(row['url']))
           PY
           source selected.env
+          printf '%s\n' "$EXPECTED" > work/expected
+          printf '%s\n' "$URL" > work/url
           curl -fL --retry 6 --retry-delay 5 "$URL" -o work/instance.cnf.xz
           xz -t work/instance.cnf.xz
           xz -dc work/instance.cnf.xz > work/instance.cnf
 
-          command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} work_solver/obj/uatu_solver work/instance.cnf"
-          if [[ "$CONFIG" == 'minisat' ]]; then
-              command='minisat -verb=0 work/instance.cnf /dev/null'
-          fi
-          if [[ "$CONFIG" == 'clause_decay_095' ]]; then
-              command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.95 work_solver/obj/uatu_solver work/instance.cnf"
-          elif [[ "$CONFIG" == 'clause_decay_099' ]]; then
-              command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.99 work_solver/obj/uatu_solver work/instance.cnf"
-          fi
+      - name: Run all configurations
+        env:
+          INDEX: ${{ matrix.index }}
+          TIMEOUT_SEC: 120
+        run: |
+          set -euo pipefail
+          mkdir -p result logs
+          EXPECTED="$(cat work/expected)"
+          URL="$(cat work/url)"
+          printf 'index,expected,config,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/results.csv
 
-          set +e
-          /usr/bin/time -f '%e,%U,%S,%M' -o work/time.csv \
-              timeout --signal=TERM --kill-after=5s "${TIMEOUT_SEC}s" \
-              bash -lc "$command" > work/output.txt 2>&1
-          rc=$?
-          set -e
+          run_one() {
+              local config="$1"
+              local command="$2"
+              local output_file="logs/${config}.out"
+              local time_file="logs/${config}.time"
 
-          result='error'
-          if grep -q 'UNSATISFIABLE' work/output.txt; then
-              result='unsat'
-          elif grep -q 'SATISFIABLE' work/output.txt; then
-              result='sat'
-          elif [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then
-              result='timeout'
-          fi
-          correct=0
-          if [[ "$result" == "$EXPECTED" ]]; then correct=1; fi
-          wall=240; user=0; sys=0; rss=0
-          if [[ -s work/time.csv ]]; then IFS=',' read -r wall user sys rss < work/time.csv || true; fi
+              set +e
+              /usr/bin/time -f '%e,%U,%S,%M' -o "$time_file" \
+                  timeout --signal=TERM --kill-after=5s "${TIMEOUT_SEC}s" \
+                  bash -lc "$command" > "$output_file" 2>&1
+              local rc=$?
+              set -e
 
-          printf 'index,expected,config,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/result.csv
-          printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-              "$INDEX" "$EXPECTED" "$CONFIG" "$result" "$correct" \
-              "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/result.csv
+              local result='error'
+              if grep -q 'UNSATISFIABLE' "$output_file"; then result='unsat';
+              elif grep -q 'SATISFIABLE' "$output_file"; then result='sat';
+              elif [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then result='timeout'; fi
+
+              local correct=0
+              if [[ "$result" == "$EXPECTED" ]]; then correct=1; fi
+              local wall=240 user=0 sys=0 rss=0
+              if [[ -s "$time_file" ]]; then IFS=',' read -r wall user sys rss < "$time_file" || true; fi
+              printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                  "$INDEX" "$EXPECTED" "$config" "$result" "$correct" \
+                  "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/results.csv
+          }
+
+          configs=(minisat ver3 negative_phase decay_095 negative_decay_095 lbd_3 lbd_6 reduce_4096 reduce_16384 clause_decay_095 clause_decay_099 hard_lbd_reset)
+          shift_count=$((INDEX % ${#configs[@]}))
+          ordered=("${configs[@]:shift_count}" "${configs[@]:0:shift_count}")
+          for config in "${ordered[@]}"; do
+              case "$config" in
+                  minisat) command='minisat -verb=0 work/instance.cnf /dev/null' ;;
+                  clause_decay_095) command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.95 bin/ver3 work/instance.cnf" ;;
+                  clause_decay_099) command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.99 bin/ver3 work/instance.cnf" ;;
+                  *) command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} bin/${config} work/instance.cnf" ;;
+              esac
+              run_one "$config" "$command"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: screen-${{ matrix.config }}-${{ matrix.index }}
-          path: result/result.csv
+          name: low-cost-${{ matrix.index }}
+          path: result/results.csv
           retention-days: 1
 
   aggregate:
@@ -227,7 +224,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: screen-*
+          pattern: low-cost-*
           path: downloaded
 
       - name: Aggregate screening results
@@ -238,7 +235,7 @@ jobs:
           from pathlib import Path
 
           rows = []
-          for path in Path('downloaded').glob('screen-*/result.csv'):
+          for path in Path('downloaded').glob('low-cost-*/results.csv'):
               with path.open(newline='') as source:
                   rows.extend(csv.DictReader(source))
           rows.sort(key=lambda row: (row['config'], int(row['index'])))
@@ -261,19 +258,19 @@ jobs:
                               sum(row['result'] == 'sat' and row['correct'] == '1' for row in selected),
                               sum(row['result'] == 'unsat' and row['correct'] == '1' for row in selected),
                               par2,
-                              sum(float(row['wall_sec']) for row in solved)))
+                              sum(float(row['wall_sec']) for row in solved),
+                              sum(row['result'] == 'error' for row in selected)))
           summary.sort(key=lambda item: (-item[1], item[4], item[5]))
 
           lines = [
-              '# Uatu Heuristic Screening', '',
+              '# Uatu Low-Cost Heuristic Screening', '',
               '- Instances: 20 deterministic SAT Competition 2025 samples (10 SAT, 10 UNSAT)',
               '- Timeout: 120 seconds per configuration and instance', '',
-              '| Rank | Configuration | Solved | SAT | UNSAT | PAR-2 (s) | Sum solved time (s) |',
-              '|---:|---|---:|---:|---:|---:|---:|',
+              '| Rank | Configuration | Solved | SAT | UNSAT | PAR-2 (s) | Sum solved time (s) | Errors |',
+              '|---:|---|---:|---:|---:|---:|---:|---:|',
           ]
-          for rank, item in enumerate(summary, 1):
-              config, solved, sat, unsat, par2, solved_time = item
-              lines.append(f'| {rank} | {config} | {solved} | {sat} | {unsat} | {par2:.3f} | {solved_time:.3f} |')
+          for rank, (config, solved, sat, unsat, par2, total, errors) in enumerate(summary, 1):
+              lines.append(f'| {rank} | {config} | {solved} | {sat} | {unsat} | {par2:.3f} | {total:.3f} | {errors} |')
           Path('evaluation/satcomp2025_subset20_screen.md').write_text('\n'.join(lines) + '\n')
           PY
 
@@ -283,5 +280,5 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git pull --rebase
           git add evaluation/satcomp2025_subset20_screen.csv evaluation/satcomp2025_subset20_screen.md
-          git commit -m 'eval: add Uatu heuristic screening results'
+          git commit -m 'eval: add low-cost heuristic screening results'
           git push
