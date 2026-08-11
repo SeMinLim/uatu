@@ -12,14 +12,7 @@ permissions:
 
 jobs:
   launch:
-    if: ${{ github.head_ref == 'eval/ver4-trigger' }}
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Dispatch evaluation workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/uatu-ver4-evaluation.yml/dispatches" \
-            -f ref=main
+      - run: echo 'The Ver4 evaluation has already been dispatched.'
