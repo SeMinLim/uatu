@@ -1,0 +1,48 @@
+name: Launch Uatu Ver4 After Smoke
+
+on:
+  workflow_run:
+    workflows:
+      - Uatu Evaluation Smoke
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  launch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize and dispatch evaluation workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat evaluation/ver4-workflow/part* | base64 -d | gzip -dc \
+            > .github/workflows/uatu-ver4-evaluation.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/uatu-ver4-evaluation.yml')
+          text = path.read_text()
+          old = "on:\n  push:\n"
+          new = "on:\n  workflow_dispatch:\n  push:\n"
+          if old not in text:
+              raise SystemExit('workflow trigger patch point not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          grep -q '^name: Uatu Ver4' .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^  workflow_dispatch:' .github/workflows/uatu-ver4-evaluation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add .github/workflows/uatu-ver4-evaluation.yml
+          git commit -m 'eval: launch Uatu ver_4 evaluation'
+          git push
+          sleep 5
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/uatu-ver4-evaluation.yml/dispatches" \
+            -f ref=main
