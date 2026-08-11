@@ -1,0 +1,4 @@
+sat minisat1m=yes: 17
+sat minisat1m=no: 155
+unsat minisat1m=yes: 8
+unsat minisat1m=no: 163
