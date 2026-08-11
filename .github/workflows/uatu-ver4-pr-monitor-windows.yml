@@ -1,0 +1,23 @@
+name: Monitor Uatu Ver4 On Windows
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  monitor:
+    if: ${{ github.head_ref == 'eval/ver4-trigger' }}
+    runs-on: windows-latest
+    steps:
+      - name: Print recent workflow runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh api "repos/$env:GITHUB_REPOSITORY/actions/runs?per_page=30" --jq '.workflow_runs[] | [.id,.name,.status,.conclusion,.head_sha,.created_at,.updated_at] | @tsv'
