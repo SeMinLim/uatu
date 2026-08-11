@@ -7,20 +7,28 @@ on:
     paths:
       - .github/workflows/prepare-uatu-eval.yml
 
+concurrency:
+  group: uatu-satcomp2025-evaluation
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
 jobs:
   prepare:
     runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.indices }}
     steps:
       - name: Build deterministic 50-instance manifest
+        id: matrix
         run: |
           set -euo pipefail
           curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dsat%20and%20track%3Dmain_2025' -o sat.uri
           curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dunsat%20and%20track%3Dmain_2025' -o unsat.uri
           python3 - <<'PY'
           import csv
+          import json
           from pathlib import Path
 
           def read_urls(path):
@@ -30,8 +38,6 @@ jobs:
           def spread_sample(values, count):
               if len(values) < count:
                   raise SystemExit(f'only {len(values)} URLs available for {count} samples')
-              if count == 1:
-                  return [values[0]]
               indices = [round(i * (len(values) - 1) / (count - 1)) for i in range(count)]
               return [values[index] for index in indices]
 
@@ -46,8 +52,10 @@ jobs:
               writer.writerow(['index', 'expected', 'url'])
               for index, (status, url) in enumerate(selected):
                   writer.writerow([index, status, url])
+          Path('matrix.json').write_text(json.dumps(list(range(50))))
           PY
           test "$(($(wc -l < satcomp2025_subset50.csv) - 1))" -eq 50
+          echo "indices=$(cat matrix.json)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -60,8 +68,9 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      max-parallel: 50
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        index: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -77,39 +86,36 @@ jobs:
       - name: Build Uatu ver_3
         run: make -C cpu/ver_3 clean all
 
-      - name: Run shard
+      - name: Run one instance
         env:
-          SHARD: ${{ matrix.shard }}
-          SHARDS: 10
+          INDEX: ${{ matrix.index }}
           TIMEOUT_SEC: 1000
         run: |
           set -euo pipefail
-          mkdir -p work "results/${SHARD}"
-          python3 - <<'PY' > shard.csv
+          mkdir -p work result
+          python3 - <<'PY' > selected.env
           import csv
           import os
+          import shlex
           with open('satcomp2025_subset50.csv', newline='') as source:
               rows = list(csv.DictReader(source))
-          shard = int(os.environ['SHARD'])
-          shards = int(os.environ['SHARDS'])
-          writer = csv.DictWriter(__import__('sys').stdout,
-                                  fieldnames=['index', 'expected', 'url'])
-          writer.writeheader()
-          for row in rows:
-              if int(row['index']) % shards == shard:
-                  writer.writerow(row)
+          row = rows[int(os.environ['INDEX'])]
+          print('EXPECTED=' + shlex.quote(row['expected']))
+          print('URL=' + shlex.quote(row['url']))
           PY
+          source selected.env
 
-          printf 'index,expected,solver,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > "results/${SHARD}/results.csv"
+          curl -fL --retry 6 --retry-delay 5 "$URL" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+          printf 'index,expected,solver,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/results.csv
 
           run_one() {
-              local index="$1"
-              local expected="$2"
-              local url="$3"
-              local solver="$4"
-              local command="$5"
-              local output_file="work/${index}-${solver}.out"
-              local time_file="work/${index}-${solver}.time"
+              local solver="$1"
+              local command="$2"
+              local output_file="work/${solver}.out"
+              local time_file="work/${solver}.time"
 
               set +e
               /usr/bin/time -f '%e,%U,%S,%M' -o "$time_file" \
@@ -128,7 +134,7 @@ jobs:
               fi
 
               local correct=0
-              if [[ "$result" == "$expected" ]]; then correct=1; fi
+              if [[ "$result" == "$EXPECTED" ]]; then correct=1; fi
 
               local wall='2000'
               local user='0'
@@ -138,36 +144,22 @@ jobs:
                   IFS=',' read -r wall user sys rss < "$time_file" || true
               fi
               printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-                  "$index" "$expected" "$solver" "$result" "$correct" \
-                  "$wall" "$user" "$sys" "$rss" "$rc" "$url" \
-                  >> "results/${SHARD}/results.csv"
+                  "$INDEX" "$EXPECTED" "$solver" "$result" "$correct" \
+                  "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/results.csv
           }
 
-          tail -n +2 shard.csv | while IFS=',' read -r index expected url; do
-              url="${url%$'\r'}"
-              rm -f work/instance.cnf.xz work/instance.cnf
-              curl -fL --retry 4 --retry-delay 3 "$url" -o work/instance.cnf.xz
-              xz -t work/instance.cnf.xz
-              xz -dc work/instance.cnf.xz > work/instance.cnf
-
-              if (( index % 2 == 0 )); then
-                  run_one "$index" "$expected" "$url" 'minisat' \
-                      "minisat -verb=0 work/instance.cnf /dev/null"
-                  run_one "$index" "$expected" "$url" 'uatu_ver3' \
-                      "UATU_TIMEOUT_SEC=${TIMEOUT_SEC} cpu/ver_3/obj/uatu_solver work/instance.cnf"
-              else
-                  run_one "$index" "$expected" "$url" 'uatu_ver3' \
-                      "UATU_TIMEOUT_SEC=${TIMEOUT_SEC} cpu/ver_3/obj/uatu_solver work/instance.cnf"
-                  run_one "$index" "$expected" "$url" 'minisat' \
-                      "minisat -verb=0 work/instance.cnf /dev/null"
-              fi
-              rm -f work/instance.cnf.xz work/instance.cnf
-          done
+          if (( INDEX % 2 == 0 )); then
+              run_one 'minisat' "minisat -verb=0 work/instance.cnf /dev/null"
+              run_one 'uatu_ver3' "UATU_TIMEOUT_SEC=${TIMEOUT_SEC} cpu/ver_3/obj/uatu_solver work/instance.cnf"
+          else
+              run_one 'uatu_ver3' "UATU_TIMEOUT_SEC=${TIMEOUT_SEC} cpu/ver_3/obj/uatu_solver work/instance.cnf"
+              run_one 'minisat' "minisat -verb=0 work/instance.cnf /dev/null"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: baseline-${{ matrix.shard }}
-          path: results/${{ matrix.shard }}/results.csv
+          name: baseline-${{ matrix.index }}
+          path: result/results.csv
           retention-days: 1
 
   aggregate:
@@ -198,6 +190,8 @@ jobs:
               with path.open(newline='') as source:
                   rows.extend(csv.DictReader(source))
           rows.sort(key=lambda row: (int(row['index']), row['solver']))
+          if len(rows) != 100:
+              raise SystemExit(f'expected 100 rows, found {len(rows)}')
 
           output_path = Path('evaluation/satcomp2025_subset50_baseline.csv')
           with output_path.open('w', newline='') as output:
@@ -210,18 +204,13 @@ jobs:
           for solver in sorted({row['solver'] for row in rows}):
               selected = [row for row in rows if row['solver'] == solver]
               solved = [row for row in selected if row['correct'] == '1']
-              sat = sum(row['correct'] == '1' and row['result'] == 'sat' for row in selected)
-              unsat = sum(row['correct'] == '1' and row['result'] == 'unsat' for row in selected)
-              par2_values = []
-              for row in selected:
-                  if row['correct'] == '1':
-                      par2_values.append(min(float(row['wall_sec']), timeout))
-                  else:
-                      par2_values.append(2.0 * timeout)
+              par2_values = [min(float(row['wall_sec']), timeout)
+                             if row['correct'] == '1' else 2.0 * timeout
+                             for row in selected]
               summary[solver] = {
                   'solved': len(solved),
-                  'sat': sat,
-                  'unsat': unsat,
+                  'sat': sum(row['correct'] == '1' and row['result'] == 'sat' for row in selected),
+                  'unsat': sum(row['correct'] == '1' and row['result'] == 'unsat' for row in selected),
                   'par2': sum(par2_values) / len(par2_values),
                   'solved_time': sum(float(row['wall_sec']) for row in solved),
                   'errors': sum(row['result'] == 'error' for row in selected),
@@ -230,7 +219,7 @@ jobs:
           lines = [
               '# SAT Competition 2025 Subset Baseline',
               '',
-              '- Instances: 50 deterministic hash-spread samples (25 SAT, 25 UNSAT)',
+              '- Instances: 50 deterministic spread samples (25 SAT, 25 UNSAT)',
               '- Timeout: 1,000 seconds per solver and instance',
               '- MiniSAT: Ubuntu package MiniSAT 2.2.1',
               '- Uatu: `cpu/ver_3` release build',
