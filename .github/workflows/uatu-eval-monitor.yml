@@ -1,0 +1,32 @@
+name: Uatu Evaluation Monitor
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/uatu-eval-monitor.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record evaluation workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p evaluation
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=30" \
+            --jq '.workflow_runs[] | [.id,.name,.status,.conclusion,.head_sha,.created_at,.updated_at] | @csv' \
+            > evaluation/actions-runs.csv
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add evaluation/actions-runs.csv
+          git commit -m 'eval: record workflow status'
+          git push
