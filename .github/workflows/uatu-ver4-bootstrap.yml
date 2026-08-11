@@ -21,13 +21,8 @@ jobs:
           set -euo pipefail
           cat evaluation/ver4-workflow/part* | base64 -d | gzip -dc \
             > .github/workflows/uatu-ver4-evaluation.yml
-          python3 - <<'PY'
-          import yaml
-          from pathlib import Path
-          workflow = yaml.safe_load(Path('.github/workflows/uatu-ver4-evaluation.yml').read_text())
-          if 'jobs' not in workflow:
-              raise SystemExit('invalid evaluation workflow')
-          PY
+          grep -q '^name: Uatu Ver4' .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^jobs:' .github/workflows/uatu-ver4-evaluation.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git pull --rebase
