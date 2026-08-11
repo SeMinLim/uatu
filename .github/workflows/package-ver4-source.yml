@@ -1,0 +1,36 @@
+name: Package Uatu Ver4 Candidate Source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decode candidate source
+        shell: pwsh
+        run: |
+          @'
+          import base64
+          import tarfile
+          from pathlib import Path
+
+          encoded = ''.join(path.read_text().strip()
+                            for path in sorted(Path('evaluation/ver4-payload').glob('part*')))
+          archive = Path('ver4-source.tar.gz')
+          archive.write_bytes(base64.b64decode(encoded))
+          Path('candidate').mkdir()
+          with tarfile.open(archive, 'r:gz') as source:
+              source.extractall('candidate')
+          '@ | python -
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-candidate-source
+          path: candidate
+          retention-days: 1
