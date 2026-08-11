@@ -13,12 +13,12 @@ permissions:
 jobs:
   monitor:
     if: ${{ github.head_ref == 'eval/ver4-trigger' }}
-    runs-on: ubuntu-24.04
+    runs-on: macos-latest
     steps:
       - name: Print recent workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=20" \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=30" \
             --jq '.workflow_runs[] | [.id,.name,.status,.conclusion,.head_sha,.created_at,.updated_at] | @tsv'
