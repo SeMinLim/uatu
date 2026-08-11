@@ -1,0 +1,36 @@
+{
+  "configuration": "vsids-negative-recursive64-tiered-reduction",
+  "beats_minisat": false,
+  "summary": [
+    {
+      "solver": "minisat",
+      "solved": 20,
+      "sat": 14,
+      "unsat": 6,
+      "wrong": 0,
+      "par2": 1268.5516,
+      "solved_time": 3427.58,
+      "peak_rss_kb": 8262280
+    },
+    {
+      "solver": "ver3",
+      "solved": 12,
+      "sat": 7,
+      "unsat": 5,
+      "wrong": 0,
+      "par2": 1572.2186,
+      "solved_time": 2610.93,
+      "peak_rss_kb": 10005740
+    },
+    {
+      "solver": "ver4",
+      "solved": 13,
+      "sat": 7,
+      "unsat": 6,
+      "wrong": 0,
+      "par2": 1533.93,
+      "solved_time": 2696.5,
+      "peak_rss_kb": 11053852
+    }
+  ]
+}
