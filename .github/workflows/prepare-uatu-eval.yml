@@ -1,0 +1,40 @@
+name: Prepare Uatu Evaluation Bundle
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/prepare-uatu-eval.yml
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MiniSAT
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisat
+
+      - name: Prepare bundle
+        run: |
+          mkdir -p bundle/uatu-ver3 bundle/bin
+          cp cpu/ver_3/solver.cpp bundle/uatu-ver3/
+          cp cpu/ver_3/solver.h bundle/uatu-ver3/
+          cp cpu/ver_3/main.cpp bundle/uatu-ver3/
+          cp cpu/ver_3/Makefile bundle/uatu-ver3/
+          cp "$(command -v minisat)" bundle/bin/minisat
+          ldd "$(command -v minisat)" > bundle/minisat-ldd.txt
+          minisat --help > bundle/minisat-help.txt 2>&1 || true
+          g++ --version > bundle/compiler.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uatu-eval-bundle
+          path: bundle
+          retention-days: 1
