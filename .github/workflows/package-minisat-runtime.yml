@@ -1,0 +1,48 @@
+name: Package MiniSAT Runtime
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/package-minisat-runtime.yml
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install and package MiniSAT
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat
+          mkdir -p bundle/bin bundle/lib
+          cp "$(command -v minisat)" bundle/bin/minisat
+          while read -r path; do
+            cp -L "$path" bundle/lib/
+          done < <(ldd "$(command -v minisat)" | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}')
+          printf '%s\n' "$(command -v minisat)" > bundle/minisat-path.txt
+          ldd "$(command -v minisat)" > bundle/minisat-ldd.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: minisat-runtime
+          path: bundle
+          retention-days: 1
+
+      - name: Record artifact run
+        run: |
+          set -euo pipefail
+          mkdir -p evaluation
+          printf '%s\n' "${GITHUB_RUN_ID}" > evaluation/minisat-package-run.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add evaluation/minisat-package-run.txt
+          git commit -m 'eval: record MiniSAT runtime artifact'
+          git push
