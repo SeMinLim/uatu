@@ -1,0 +1,287 @@
+name: Uatu Heuristic Screening
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/uatu-heuristic-screen.yml
+
+concurrency:
+  group: uatu-heuristic-screen
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      indices: ${{ steps.matrix.outputs.indices }}
+    steps:
+      - name: Build 20-instance tuning subset
+        id: matrix
+        run: |
+          set -euo pipefail
+          curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dsat%20and%20track%3Dmain_2025' -o sat.uri
+          curl -fsSL 'https://benchmark-database.de/getinstances?context=cnf&query=result%3Dunsat%20and%20track%3Dmain_2025' -o unsat.uri
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          def read_urls(path):
+              return sorted({line.strip() for line in Path(path).read_text().splitlines()
+                             if line.strip().startswith('http')})
+
+          def spread(values, count):
+              return [values[round(i * (len(values) - 1) / (count - 1))]
+                      for i in range(count)]
+
+          selected = [('sat', url) for url in spread(read_urls('sat.uri'), 10)]
+          selected += [('unsat', url) for url in spread(read_urls('unsat.uri'), 10)]
+          selected.sort(key=lambda item: item[1])
+          with open('subset20.csv', 'w', newline='') as output:
+              writer = csv.writer(output)
+              writer.writerow(['index', 'expected', 'url'])
+              for index, (expected, url) in enumerate(selected):
+                  writer.writerow([index, expected, url])
+          print(len(selected))
+          PY
+          test "$(($(wc -l < subset20.csv) - 1))" -eq 20
+          echo 'indices=[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]' >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: subset20
+          path: subset20.csv
+          retention-days: 1
+
+  screen:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 100
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+        config:
+          - minisat
+          - ver3
+          - negative_phase
+          - decay_095
+          - negative_decay_095
+          - lbd_3
+          - lbd_6
+          - reduce_4096
+          - reduce_16384
+          - clause_decay_095
+          - clause_decay_099
+          - hard_lbd_reset
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: subset20
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+
+      - name: Prepare solver configuration
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          set -euo pipefail
+          cp -r cpu/ver_3 work_solver
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          config = os.environ['CONFIG']
+          path = Path('work_solver/solver.cpp')
+          text = path.read_text()
+
+          if config in {'negative_phase', 'negative_decay_095'}:
+              old = "\tif ( saved[next] ) next *= saved[next];"
+              new = "\tif ( saved[next] ) next *= saved[next];\n\telse next = -next;"
+              if old not in text:
+                  raise SystemExit('decision-phase patch point not found')
+              text = text.replace(old, new, 1)
+
+          if config in {'decay_095', 'negative_decay_095'}:
+              old = '        var_decay = 0.8;'
+              if old not in text:
+                  raise SystemExit('VSIDS decay patch point not found')
+              text = text.replace(old, '        var_decay = 0.95;', 1)
+
+          if config == 'lbd_3':
+              old = 'clauseDB[i].lbd >= 5'
+              if old not in text:
+                  raise SystemExit('LBD threshold patch point not found')
+              text = text.replace(old, 'clauseDB[i].lbd >= 3', 1)
+
+          if config == 'lbd_6':
+              old = 'clauseDB[i].lbd >= 5'
+              if old not in text:
+                  raise SystemExit('LBD threshold patch point not found')
+              text = text.replace(old, 'clauseDB[i].lbd >= 6', 1)
+
+          if config == 'reduce_4096':
+              old = '        reduce_limit = 8192;'
+              if old not in text:
+                  raise SystemExit('reduce-limit patch point not found')
+              text = text.replace(old, '        reduce_limit = 4096;', 1)
+
+          if config == 'reduce_16384':
+              old = '        reduce_limit = 8192;'
+              if old not in text:
+                  raise SystemExit('reduce-limit patch point not found')
+              text = text.replace(old, '        reduce_limit = 16384;', 1)
+
+          if config == 'hard_lbd_reset':
+              old = '                        resetRecentLBD();'
+              new = '                        backtrack(0);\n                        resetRecentLBD();'
+              if old not in text:
+                  raise SystemExit('LBD reset patch point not found')
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          if [[ "$CONFIG" != 'minisat' ]]; then
+              make -C work_solver clean all
+          fi
+
+      - name: Run configuration
+        env:
+          INDEX: ${{ matrix.index }}
+          CONFIG: ${{ matrix.config }}
+          TIMEOUT_SEC: 120
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          python3 - <<'PY' > selected.env
+          import csv
+          import os
+          import shlex
+          with open('subset20.csv', newline='') as source:
+              rows = list(csv.DictReader(source))
+          row = rows[int(os.environ['INDEX'])]
+          print('EXPECTED=' + shlex.quote(row['expected']))
+          print('URL=' + shlex.quote(row['url']))
+          PY
+          source selected.env
+          curl -fL --retry 6 --retry-delay 5 "$URL" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+          command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} work_solver/obj/uatu_solver work/instance.cnf"
+          if [[ "$CONFIG" == 'minisat' ]]; then
+              command='minisat -verb=0 work/instance.cnf /dev/null'
+          fi
+          if [[ "$CONFIG" == 'clause_decay_095' ]]; then
+              command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.95 work_solver/obj/uatu_solver work/instance.cnf"
+          elif [[ "$CONFIG" == 'clause_decay_099' ]]; then
+              command="UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_CLAUSE_DECAY=0.99 work_solver/obj/uatu_solver work/instance.cnf"
+          fi
+
+          set +e
+          /usr/bin/time -f '%e,%U,%S,%M' -o work/time.csv \
+              timeout --signal=TERM --kill-after=5s "${TIMEOUT_SEC}s" \
+              bash -lc "$command" > work/output.txt 2>&1
+          rc=$?
+          set -e
+
+          result='error'
+          if grep -q 'UNSATISFIABLE' work/output.txt; then
+              result='unsat'
+          elif grep -q 'SATISFIABLE' work/output.txt; then
+              result='sat'
+          elif [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then
+              result='timeout'
+          fi
+          correct=0
+          if [[ "$result" == "$EXPECTED" ]]; then correct=1; fi
+          wall=240; user=0; sys=0; rss=0
+          if [[ -s work/time.csv ]]; then IFS=',' read -r wall user sys rss < work/time.csv || true; fi
+
+          printf 'index,expected,config,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,url\n' > result/result.csv
+          printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+              "$INDEX" "$EXPECTED" "$CONFIG" "$result" "$correct" \
+              "$wall" "$user" "$sys" "$rss" "$rc" "$URL" >> result/result.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screen-${{ matrix.config }}-${{ matrix.index }}
+          path: result/result.csv
+          retention-days: 1
+
+  aggregate:
+    needs: screen
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: screen-*
+          path: downloaded
+
+      - name: Aggregate screening results
+        run: |
+          mkdir -p evaluation
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = []
+          for path in Path('downloaded').glob('screen-*/result.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+          rows.sort(key=lambda row: (row['config'], int(row['index'])))
+          if len(rows) != 240:
+              raise SystemExit(f'expected 240 rows, found {len(rows)}')
+
+          with Path('evaluation/satcomp2025_subset20_screen.csv').open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader()
+              writer.writerows(rows)
+
+          timeout = 120.0
+          summary = []
+          for config in sorted({row['config'] for row in rows}):
+              selected = [row for row in rows if row['config'] == config]
+              solved = [row for row in selected if row['correct'] == '1']
+              par2 = sum(min(float(row['wall_sec']), timeout) if row['correct'] == '1'
+                         else 2.0 * timeout for row in selected) / len(selected)
+              summary.append((config, len(solved),
+                              sum(row['result'] == 'sat' and row['correct'] == '1' for row in selected),
+                              sum(row['result'] == 'unsat' and row['correct'] == '1' for row in selected),
+                              par2,
+                              sum(float(row['wall_sec']) for row in solved)))
+          summary.sort(key=lambda item: (-item[1], item[4], item[5]))
+
+          lines = [
+              '# Uatu Heuristic Screening', '',
+              '- Instances: 20 deterministic SAT Competition 2025 samples (10 SAT, 10 UNSAT)',
+              '- Timeout: 120 seconds per configuration and instance', '',
+              '| Rank | Configuration | Solved | SAT | UNSAT | PAR-2 (s) | Sum solved time (s) |',
+              '|---:|---|---:|---:|---:|---:|---:|',
+          ]
+          for rank, item in enumerate(summary, 1):
+              config, solved, sat, unsat, par2, solved_time = item
+              lines.append(f'| {rank} | {config} | {solved} | {sat} | {unsat} | {par2:.3f} | {solved_time:.3f} |')
+          Path('evaluation/satcomp2025_subset20_screen.md').write_text('\n'.join(lines) + '\n')
+          PY
+
+      - name: Commit screening results
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add evaluation/satcomp2025_subset20_screen.csv evaluation/satcomp2025_subset20_screen.md
+          git commit -m 'eval: add Uatu heuristic screening results'
+          git push
