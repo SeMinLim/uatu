@@ -12,7 +12,12 @@ permissions:
 
 jobs:
   launch:
-    if: ${{ false }}
-    runs-on: ubuntu-24.04
+    if: ${{ github.head_ref == 'eval/ver4-trigger' }}
+    runs-on: windows-latest
     steps:
-      - run: echo 'The Ver4 evaluation has already been dispatched.'
+      - name: Dispatch Ver4 source packaging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh api --method POST "repos/$env:GITHUB_REPOSITORY/actions/workflows/package-ver4-source.yml/dispatches" -f ref=main
