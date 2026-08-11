@@ -1,0 +1,32 @@
+name: Launch Uatu Ver4 After MiniSAT Package
+
+on:
+  workflow_run:
+    workflows:
+      - Package MiniSAT Runtime
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+jobs:
+  launch:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize evaluation workflow
+        run: |
+          set -euo pipefail
+          cat evaluation/ver4-workflow/part* | base64 -d | gzip -dc \
+            > .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^name: Uatu Ver4' .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^jobs:' .github/workflows/uatu-ver4-evaluation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add .github/workflows/uatu-ver4-evaluation.yml
+          git commit -m 'eval: launch Uatu ver_4 evaluation'
+          git push
