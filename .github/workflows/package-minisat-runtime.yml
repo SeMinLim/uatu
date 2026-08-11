@@ -1,4 +1,4 @@
-name: Package MiniSAT Runtime
+name: Launch Uatu Ver4 Evaluation
 
 on:
   push:
@@ -11,38 +11,21 @@ permissions:
   contents: write
 
 jobs:
-  package:
+  launch:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install and package MiniSAT
+      - name: Materialize evaluation workflow
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y minisat
-          mkdir -p bundle/bin bundle/lib
-          cp "$(command -v minisat)" bundle/bin/minisat
-          while read -r path; do
-            cp -L "$path" bundle/lib/
-          done < <(ldd "$(command -v minisat)" | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}')
-          printf '%s\n' "$(command -v minisat)" > bundle/minisat-path.txt
-          ldd "$(command -v minisat)" > bundle/minisat-ldd.txt
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: minisat-runtime
-          path: bundle
-          retention-days: 1
-
-      - name: Record artifact run
-        run: |
-          set -euo pipefail
-          mkdir -p evaluation
-          printf '%s\n' "${GITHUB_RUN_ID}" > evaluation/minisat-package-run.txt
+          cat evaluation/ver4-workflow/part* | base64 -d | gzip -dc \
+            > .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^name: Uatu Ver4' .github/workflows/uatu-ver4-evaluation.yml
+          grep -q '^jobs:' .github/workflows/uatu-ver4-evaluation.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git pull --rebase
-          git add evaluation/minisat-package-run.txt
-          git commit -m 'eval: record MiniSAT runtime artifact'
+          git add .github/workflows/uatu-ver4-evaluation.yml
+          git commit -m 'eval: launch Uatu ver_4 evaluation'
           git push
