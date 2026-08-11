@@ -21,7 +21,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p evaluation
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=30" \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=50" \
             --jq '.workflow_runs[] | [.id,.name,.status,.conclusion,.head_sha,.created_at,.updated_at] | @csv' \
             > evaluation/actions-runs.csv
           git config user.name 'github-actions[bot]'
@@ -31,4 +31,4 @@ jobs:
           git commit -m 'eval: record workflow status'
           git push
 
-# fast-screen monitor refresh
+# ver4-bootstrap monitor refresh
