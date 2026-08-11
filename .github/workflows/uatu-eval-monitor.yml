@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   monitor:
-    runs-on: ubuntu-24.04
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Record evaluation workflow status
@@ -31,4 +31,4 @@ jobs:
           git commit -m 'eval: record workflow status'
           git push
 
-# Monitor refresh 6
+# macOS monitor refresh
