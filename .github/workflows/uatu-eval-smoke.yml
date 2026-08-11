@@ -1,0 +1,26 @@
+name: Uatu Evaluation Smoke
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/uatu-eval-smoke.yml
+
+permissions:
+  contents: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record successful runner execution
+        run: |
+          mkdir -p evaluation
+          printf 'GitHub Actions evaluation runner is available.\n' > evaluation/actions-smoke.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add evaluation/actions-smoke.txt
+          git commit -m 'eval: confirm GitHub Actions runner'
+          git push
