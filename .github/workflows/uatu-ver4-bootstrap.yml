@@ -1,0 +1,36 @@
+name: Prepare Uatu Ver4 Evaluation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/uatu-ver4-bootstrap.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize evaluation workflow
+        run: |
+          set -euo pipefail
+          cat evaluation/ver4-workflow/part* | base64 -d | gzip -dc \
+            > .github/workflows/uatu-ver4-evaluation.yml
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          workflow = yaml.safe_load(Path('.github/workflows/uatu-ver4-evaluation.yml').read_text())
+          if 'jobs' not in workflow:
+              raise SystemExit('invalid evaluation workflow')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git pull --rebase
+          git add .github/workflows/uatu-ver4-evaluation.yml
+          git commit -m 'eval: launch Uatu ver_4 evaluation'
+          git push
