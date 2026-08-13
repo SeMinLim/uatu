@@ -39,7 +39,6 @@ jobs:
           grep -q '^  workflow_dispatch:' .github/workflows/uatu-ver4-evaluation.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git pull --rebase
           git add .github/workflows/uatu-ver4-evaluation.yml
           git commit -m 'eval: materialize Uatu ver_4 evaluation'
           git push
