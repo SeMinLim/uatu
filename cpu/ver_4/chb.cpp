@@ -77,11 +77,15 @@ public:
 
 	int pop( void ) {
 		const int variable = heap[0];
-		heap[0] = heap.back();
-		pos[heap[0]] = 0;
-		pos[variable] = -1;
+		const int lastVariable = heap.back();
 		heap.pop_back();
-		if ( !heap.empty() ) down(0);
+		pos[variable] = -1;
+
+		if ( !heap.empty() ) {
+			heap[0] = lastVariable;
+			pos[lastVariable] = 0;
+			down(0);
+		}
 		return variable;
 	}
 };
@@ -166,15 +170,19 @@ static int decideCHB( Solver &solver, CHBState &state ) {
 static void backtrackCHB( Solver &solver, CHBState &state, int backtrackLevel ) {
 	if ( static_cast<int>(solver.decVarInTrail.size()) <= backtrackLevel ) return;
 
-	for ( int i = solver.trail.size() - 1;
-	      i >= solver.decVarInTrail[backtrackLevel]; i -- ) {
+	const int trailLimit = solver.decVarInTrail[backtrackLevel];
+	for ( int i = static_cast<int>(solver.trail.size()) - 1;
+	      i >= trailLimit; i -- ) {
 		const int variable = abs(solver.trail[i]);
-		solver.value[variable] = 0;
+
 		solver.saved[variable] = solver.trail[i] > 0 ? 1 : -1;
+		solver.value[variable] = 0;
+		solver.reason[variable] = -1;
+		solver.level[variable] = 0;
 		state.heap.insert(variable);
 	}
 
-	solver.propagated = solver.decVarInTrail[backtrackLevel];
+	solver.propagated = trailLimit;
 	solver.trail.resize(solver.propagated);
 	solver.decVarInTrail.resize(backtrackLevel);
 	if ( state.action > solver.propagated ) state.action = solver.propagated;
@@ -186,15 +194,25 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 	solver.time_stamp ++;
 	solver.learnt.clear();
 
-	const int conflictLevel = solver.level[abs(solver.clauseDB[conflict][0])];
+	if ( conflict < 0 || conflict >= static_cast<int>(solver.clauseDB.size()) ) {
+		fprintf( stderr, "internal error: invalid conflict clause\n" );
+		return 30;
+	}
+
+	const int conflictLevel = static_cast<int>(solver.decVarInTrail.size());
 	if ( conflictLevel == 0 ) return 20;
 
 	solver.learnt.push_back(0);
 	int unresolved = 0;
 	int resolveLiteral = 0;
-	int trailIndex = solver.trail.size() - 1;
+	int trailIndex = static_cast<int>(solver.trail.size()) - 1;
 
 	do {
+		if ( conflict < 0 || conflict >= static_cast<int>(solver.clauseDB.size()) ) {
+			fprintf( stderr, "internal error: invalid reason clause\n" );
+			return 30;
+		}
+
 		solver.updateClauseQuality(conflict);
 		Clause &clause = solver.clauseDB[conflict];
 		const int begin = resolveLiteral == 0 ? 0 : 1;
@@ -205,7 +223,7 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 
 			state.lastConflict[variable] = solver.conflicts;
 			solver.mark[variable] = solver.time_stamp;
-			if ( solver.level[variable] >= conflictLevel ) unresolved ++;
+			if ( solver.level[variable] == conflictLevel ) unresolved ++;
 			else solver.learnt.push_back(clause[i]);
 		}
 
@@ -215,13 +233,22 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 		}
 		if ( trailIndex < 0 ) {
 			fprintf( stderr, "internal error: malformed implication graph\n" );
-			abort();
+			return 30;
 		}
 
-		resolveLiteral = solver.trail[trailIndex--];
-		conflict = solver.reason[abs(resolveLiteral)];
+		resolveLiteral = solver.trail[trailIndex --];
 		solver.mark[abs(resolveLiteral)] = 0;
 		unresolved --;
+
+		if ( unresolved > 0 ) {
+			const int nextReason = solver.reason[abs(resolveLiteral)];
+			if ( nextReason < 0 ||
+			     nextReason >= static_cast<int>(solver.clauseDB.size()) ) {
+				fprintf( stderr, "internal error: invalid reason clause\n" );
+				return 30;
+			}
+			conflict = nextReason;
+		}
 	} while ( unresolved > 0 );
 
 	solver.learnt[0] = -resolveLiteral;
@@ -239,7 +266,8 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 			const int literal = solver.learnt[i];
 			const int variable = abs(literal);
 			const int reasonClause = solver.reason[variable];
-			bool removable = reasonClause >= 0;
+			bool removable = reasonClause >= 0 &&
+				reasonClause < static_cast<int>(solver.clauseDB.size());
 
 			if ( removable ) {
 				const Clause &reasonData = solver.clauseDB[reasonClause];
@@ -254,7 +282,7 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 			}
 
 			if ( removable ) solver.minimizedLiterals ++;
-			else solver.learnt[out++] = literal;
+			else solver.learnt[out ++] = literal;
 		}
 		solver.learnt.resize(out);
 	}
@@ -271,7 +299,7 @@ static int analyzeCHB( Solver &solver, CHBState &state, int conflict,
 
 	if ( solver.lbd_queue_size < 50 ) solver.lbd_queue_size ++;
 	else solver.fast_lbd_sum -= solver.lbd_queue[solver.lbd_queue_pos];
-	solver.lbd_queue[solver.lbd_queue_pos++] = lbd;
+	solver.lbd_queue[solver.lbd_queue_pos ++] = lbd;
 	if ( solver.lbd_queue_pos == 50 ) solver.lbd_queue_pos = 0;
 	solver.fast_lbd_sum += lbd;
 	solver.slow_lbd_sum += lbd > 50 ? 50 : lbd;
@@ -324,7 +352,7 @@ int solveCHB( Solver &solver ) {
 			int backtrackLevel = 0;
 			int lbd = 0;
 			result = analyzeCHB(solver, state, conflictClause, backtrackLevel, lbd);
-			if ( result == 20 ) break;
+			if ( result != 0 ) break;
 
 			backtrackCHB(solver, state, backtrackLevel);
 			if ( solver.learnt.size() == 1 ) {
