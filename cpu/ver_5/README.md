@@ -1,9 +1,9 @@
 # Uatu Ver. 5
 
-Recursive learned-clause minimization built on Ver. 3.
+CHB-based CDCL solver with recursive learned-clause minimization.
 
 ## Architecture
 
-- Retains the Ver. 3 BCP, First-UIP learning, VSIDS branching, and learned-clause management.
-- Replaces one-step minimization with recursive reason-graph traversal.
-- Removes a learned literal when its complete reason closure is already implied by root-level or learned literals.
+- Retains the corrected Ver. 4 BCP, First-UIP learning, CHB branching, and learned-clause management.
+- Replaces one-step minimization with recursive traversal of the implication-graph reason closure.
+- Removes a learned literal only when every non-root antecedent is already represented by the learned clause or is recursively redundant.

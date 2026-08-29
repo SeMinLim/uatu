@@ -1,15 +1,15 @@
 CXX ?= g++
 CPPFLAGS ?=
 CXXFLAGS_COMMON := -std=c++17 -Wall -Wextra -Wpedantic
-CXXFLAGS_RELEASE := -O3 -DNDEBUG -march=native
+CXXFLAGS_RELEASE := -O3 -DNDEBUG
 CXXFLAGS_DEBUG := -O0 -g3
 LDLIBS ?=
 
 TARGET := obj/uatu_solver
 PROFILE_TARGET := obj/uatu_solver_profile
 DEBUG_TARGET := obj/uatu_solver_debug
-SOURCES := solver.cpp recursive.cpp main.cpp
-HEADERS := solver.h recursive.h ../ver_3/solver.h ../ver_3/solver.cpp
+SOURCES := solver.cpp chb.cpp recursive.cpp main.cpp
+HEADERS := solver.h chb.h recursive.h
 
 .PHONY: all release profile debug clean run run-profile run-debug
 

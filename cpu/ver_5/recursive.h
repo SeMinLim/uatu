@@ -3,6 +3,6 @@
 
 class Solver;
 
-int solveRecursive( Solver &solver );
+void minimizeLearnedClauseRecursive( Solver &solver );
 
 #endif

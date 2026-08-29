@@ -1,5 +1,5 @@
 #include "solver.h"
-#include "recursive.h"
+#include "chb.h"
 
 #include <cstdlib>
 
@@ -19,7 +19,7 @@ int main( int argc, char **argv ) {
 	} else if ( result == 30 ) {
 		printf( "UNSOLVED\n" );
 	} else {
-		result = solveRecursive(solver);
+		result = solveCHB(solver);
 		if ( result == 10 ) {
 			printf( "SATISFIABLE\n" );
 			const char *print = getenv("UATU_PRINT_MODEL");
@@ -43,6 +43,7 @@ int main( int argc, char **argv ) {
 	printf( "Minimized Literals   : %lld\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %lld\n", solver.clauseActivityBumps );
 	printf( "Dynamic LBD Updates  : %lld\n", solver.dynamicLBDUpdates );
+	printf( "CHB Score Updates    : %lld\n", getCHBScoreUpdates() );
 	printf( "Active Clauses       : %zu\n", solver.clauseDB.size() );
 	printf( "----------------------------------------------------\n" );
 
