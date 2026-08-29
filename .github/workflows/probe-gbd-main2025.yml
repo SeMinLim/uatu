@@ -1,0 +1,49 @@
+name: Probe GBD Main 2025
+
+on:
+  push:
+    branches:
+      - temp/ver5-vs-minisat-100
+    paths:
+      - .github/workflows/probe-gbd-main2025.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Inspect metadata endpoint
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet beautifulsoup4 requests
+          python3 - <<'PY'
+          import re
+          import requests
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
+
+          url = 'https://benchmark-database.de/?context=cnf&track=main_2025'
+          response = requests.get(url, timeout=120)
+          response.raise_for_status()
+          print('status', response.status_code, 'bytes', len(response.content), 'url', response.url)
+          soup = BeautifulSoup(response.text, 'html.parser')
+          hashes = []
+          for row in soup.find_all('tr'):
+              cells = [cell.get_text(' ', strip=True) for cell in row.find_all(['th', 'td'])]
+              if cells and re.fullmatch(r'[0-9a-f]{32}', cells[0]):
+                  hashes.append(cells)
+          print('metadata rows', len(hashes))
+          if hashes:
+              print('first row', hashes[0])
+              print('last row', hashes[-1])
+          print('links')
+          for anchor in soup.find_all('a', href=True):
+              text = anchor.get_text(' ', strip=True)
+              href = urljoin(response.url, anchor['href'])
+              if 'meta' in text.lower() or 'page' in href.lower() or 'track' in href.lower():
+                  print(repr(text), href)
+          print('forms')
+          for form in soup.find_all('form'):
+              print('FORM', form.get('method'), urljoin(response.url, form.get('action', '')))
+              for element in form.find_all(['input', 'button', 'select', 'option']):
+                  print(' ', element.name, element.get('name'), element.get('value'), element.get_text(' ', strip=True))
+          PY
