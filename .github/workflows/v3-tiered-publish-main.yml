@@ -1,0 +1,89 @@
+name: Publish Validated V3 Tiered Ver5 to Main
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-publish-main.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-publish-main
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the validated source branch
+        run: |
+          set -euo pipefail
+          git fetch origin main temp/v3-tiered-evaluation
+          git checkout -B temp/v3-tiered-evaluation \
+              origin/temp/v3-tiered-evaluation
+          test -f evaluation/ver5_tiered_10_complete.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          summary = json.loads(
+              Path('evaluation/ver5_tiered_10_complete.json').read_text()
+          )
+          required = {
+              'variant': 'V3 + Tiered Clause Management',
+              'chb_enabled': False,
+              'recursive_minimization_enabled': False,
+              'tiered_clause_management_enabled': True,
+              'sat_competition_2025_instances': 10,
+              'ver5_correct': 10,
+              'minisat_correct': 10,
+              'strict_build': 'pass',
+              'deterministic_tests': 'pass',
+          }
+          for key, expected in required.items():
+              actual = summary.get(key)
+              if actual != expected:
+                  raise SystemExit(
+                      f'completion record mismatch: {key}={actual!r}, '
+                      f'expected {expected!r}'
+                  )
+          PY
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/recursive.cpp
+          make -C cpu/ver_5 clean all
+          make -C cpu/ver_5 test
+
+      - name: Publish only Ver5 and its evaluation records
+        run: |
+          set -euo pipefail
+          git checkout -B main origin/main
+          rm -rf cpu/ver_5
+          git checkout origin/temp/v3-tiered-evaluation -- \
+              cpu/ver_5 \
+              evaluation/ver5_tiered_10_manifest.csv \
+              evaluation/ver5_tiered_10_raw.csv \
+              evaluation/ver5_tiered_10_report.md \
+              evaluation/ver5_tiered_10_complete.json
+
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_5 \
+                  evaluation/ver5_tiered_10_manifest.csv \
+                  evaluation/ver5_tiered_10_raw.csv \
+                  evaluation/ver5_tiered_10_report.md \
+                  evaluation/ver5_tiered_10_complete.json
+          if git diff --cached --quiet; then
+              echo 'Main already contains the validated implementation.'
+          else
+              git commit -m 'feat: change Ver5 to V3 plus tiered clause management'
+              git push origin HEAD:main
+          fi
