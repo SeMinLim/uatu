@@ -1,0 +1,170 @@
+name: Rebuild and Validate V3 Plus Tiered Clause Management
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-bootstrap-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-evaluation-v2
+  cancel-in-progress: true
+
+jobs:
+  rebuild-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+          python3 -m pip install --quiet pyyaml
+
+      - name: Recreate the implementation from the bootstrap specification
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          import yaml
+          from pathlib import Path
+
+          workflow = yaml.safe_load(
+              Path('.github/workflows/v3-tiered-bootstrap.yml').read_text()
+          )
+          steps = workflow['jobs']['implement-and-validate']['steps']
+          for step in steps:
+              if step.get('name') == 'Reset Ver5 to V3 and add tiered clause management':
+                  subprocess.run(['bash', '-lc', step['run']], check=True)
+                  break
+          else:
+              raise SystemExit('implementation bootstrap step not found')
+          PY
+
+      - name: Verify composition and strict build
+        run: |
+          set -euo pipefail
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/chb.h
+          test ! -e cpu/ver_5/recursive.cpp
+          test ! -e cpu/ver_5/recursive.h
+          ! grep -R -n -E 'CHB|chb|recursive[_A-Za-z]*minimi' \
+              cpu/ver_5/solver.cpp cpu/ver_5/solver.h cpu/ver_5/main.cpp
+          grep -q 'ClauseTier::CORE' cpu/ver_5/solver.cpp
+          grep -q 'ClauseTier::TIER2' cpu/ver_5/solver.cpp
+          grep -q 'ClauseTier::LOCAL' cpu/ver_5/solver.cpp
+          make -C cpu/ver_5 clean all
+
+      - name: Run deterministic, policy, and sanitizer tests
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 test
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -O2 \
+              -Icpu/ver_5 \
+              cpu/ver_5/tests/tier_policy_test.cpp \
+              cpu/ver_5/solver.cpp \
+              -o /tmp/tier_policy_test
+          /tmp/tier_policy_test
+
+          make -C cpu/ver_5 clean
+          make -C cpu/ver_5 \
+              CXXFLAGS='-std=c++17 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+              LDFLAGS='-fsanitize=address,undefined'
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+              python3 cpu/ver_5/tests/test_solver.py \
+                  --solver cpu/ver_5/obj/uatu_solver \
+                  --cases 20
+          make -C cpu/ver_5 clean all
+
+      - name: Fetch the prior fixed evaluation data
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          ref = urllib.parse.quote('temp/ver5-vs-minisat-100', safe='')
+          url = (
+              'https://api.github.com/repos/SeMinLim/uatu/contents/'
+              'evaluation/ver5_vs_minisat_100_raw.csv?ref=' + ref
+          )
+          request = urllib.request.Request(
+              url,
+              headers={
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'uatu-tiered-validation',
+              },
+          )
+          payload = json.load(urllib.request.urlopen(request, timeout=120))
+          Path('/tmp/ver5_vs_minisat_100_raw.csv').write_bytes(
+              base64.b64decode(payload['content'])
+          )
+          PY
+
+      - name: Validate on 10 SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          import subprocess
+          import yaml
+          from pathlib import Path
+
+          workflow = yaml.safe_load(
+              Path('.github/workflows/v3-tiered-bootstrap.yml').read_text()
+          )
+          steps = workflow['jobs']['implement-and-validate']['steps']
+          for step in steps:
+              if step.get('name') == 'Validate on 10 SAT Competition 2025 benchmarks':
+                  script = step['run']
+                  script = re.sub(
+                      r"raw_url = \(.*?\n\s*\)",
+                      "raw_url = 'file:///tmp/ver5_vs_minisat_100_raw.csv'",
+                      script,
+                      count=1,
+                      flags=re.DOTALL,
+                  )
+                  subprocess.run(['bash', '-lc', script], check=True)
+                  break
+          else:
+              raise SystemExit('benchmark validation step not found')
+          PY
+
+      - name: Commit validated implementation and results
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_5 \
+                  evaluation/ver5_tiered_10_manifest.csv \
+                  evaluation/ver5_tiered_10_raw.csv \
+                  evaluation/ver5_tiered_10_report.md
+          if git diff --cached --quiet; then
+              echo 'Validated tree already committed.'
+          else
+              git commit -m 'feat: implement V3 plus tiered clause management in Ver5'
+              git push origin HEAD:temp/v3-tiered-evaluation
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v3-tiered-validation-v2
+          path: |
+            evaluation/ver5_tiered_10_manifest.csv
+            evaluation/ver5_tiered_10_raw.csv
+            evaluation/ver5_tiered_10_report.md
+          retention-days: 7
