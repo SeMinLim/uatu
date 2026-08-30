@@ -165,7 +165,7 @@ public:
         int *reason,                                    // The index of the clause that implies the variable assignment
             *level,                                     // The decision level of a variable
             *mark;                                      // Parameter for conflict analysis
-	unsigned int *lbdMark;                          // Decision-level marks for dynamic LBD
+	unsigned int *lbdMark;                          // Marks for dynamic LBD and recursive minimization
 	unsigned int lbdStamp;
 
     	double *activity;                              // The variables' score for VSIDS
