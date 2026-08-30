@@ -1,0 +1,253 @@
+name: Validate Uatu Ver5 Tiered Clause Management
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/ver5-tiered-validation-v2.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: uatu-ver5-tiered-validation-v2
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/v3-tiered-evaluation
+          fetch-depth: 0
+
+      - name: Install validation dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat
+
+      - name: Replace Ver5 with V3 plus tiered clause management
+        run: |
+          set -euo pipefail
+          rm -rf cpu/ver_5
+          cp -a cpu/ver_3 cpu/ver_5
+          python3 .github/scripts/prepare_ver5_tiered.py
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/chb.h
+          test ! -e cpu/ver_5/recursive.cpp
+          test ! -e cpu/ver_5/recursive.h
+          grep -q 'CLAUSE_CORE' cpu/ver_5/solver.h
+          grep -q 'CLAUSE_TIER2' cpu/ver_5/solver.h
+          grep -q 'CLAUSE_LOCAL' cpu/ver_5/solver.h
+          grep -q 'level\[variable\] == conflictLevel' cpu/ver_5/solver.cpp
+
+      - name: Build release, debug, and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_5 debug CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+              -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+              cpu/ver_5/solver.cpp cpu/ver_5/main.cpp \
+              -o cpu/ver_5/obj/uatu_solver_sanitize
+
+      - name: Differential correctness and sanitizer validation
+        run: |
+          set -euo pipefail
+          mkdir -p validation
+          python3 .github/scripts/validate_ver5_tiered.py \
+              cpu/ver_5/obj/uatu_solver_sanitize
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiered-implementation-validation
+          path: validation/implementation.txt
+          retention-days: 7
+
+      - name: Commit implementation to validation branch
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add README.md cpu/ver_5
+          git commit -m 'replace ver_5 with V3 tiered clause management'
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+  benchmark:
+    needs: implement
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include:
+          - id: 18
+            expected: unsat
+            hash: 5c24cfeff639fefdead9a5641f65fa22
+          - id: 21
+            expected: sat
+            hash: 69f6dd335626a9b71bfc6f2332f52b9d
+          - id: 54
+            expected: sat
+            hash: 53c21f3e78f060883026b5a12ba691d8
+          - id: 63
+            expected: unsat
+            hash: 8f391f2bf8167f1b96467f3479b33dc5
+          - id: 70
+            expected: sat
+            hash: d89fc3e9c24e0383e940464f4704657e
+          - id: 72
+            expected: unsat
+            hash: 09cd83e233380d0ba1fc56cee88367b1
+          - id: 80
+            expected: sat
+            hash: 602c8a200227ab9d64d855164d35b5cf
+          - id: 84
+            expected: unsat
+            hash: f6f91f6a44c3953b788c026cbbaa4e91
+          - id: 92
+            expected: sat
+            hash: c86b261162cef181dc513963a8acb77f
+          - id: 95
+            expected: unsat
+            hash: d971241ca861121371d20be1d61c15a3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/v3-tiered-evaluation
+
+      - name: Install dependencies and build Ver5
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xz-utils
+          make -C cpu/ver_5 clean all CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Download SAT Competition 2025 benchmark
+        env:
+          BENCHMARK_HASH: ${{ matrix.hash }}
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          url="https://benchmark-database.de/file/${BENCHMARK_HASH}?context=cnf"
+          curl -fL --retry 8 --retry-delay 5 "$url" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run and validate Ver5
+        env:
+          BENCHMARK_ID: ${{ matrix.id }}
+          EXPECTED: ${{ matrix.expected }}
+          BENCHMARK_HASH: ${{ matrix.hash }}
+        run: |
+          set -euo pipefail
+          set +e
+          /usr/bin/time -q -f '%e,%U,%S,%M' -o work/timing.csv \
+              timeout --signal=TERM --kill-after=5s 310s \
+              env UATU_TIMEOUT_SEC=300 UATU_PRINT_MODEL=1 \
+              cpu/ver_5/obj/uatu_solver work/instance.cnf \
+              > work/uatu.out 2>&1
+          rc=$?
+          set -e
+
+          actual=unknown
+          if grep -qx 'UNSATISFIABLE' work/uatu.out; then
+              actual=unsat
+          elif grep -qx 'SATISFIABLE' work/uatu.out; then
+              actual=sat
+          fi
+          if [[ "$actual" != "$EXPECTED" ]]; then
+              cat work/uatu.out
+              printf 'Expected %s but received %s with exit code %s\n' "$EXPECTED" "$actual" "$rc"
+              exit 1
+          fi
+
+          model_valid=1
+          if [[ "$actual" == sat ]]; then
+              python3 .github/scripts/verify_sat_model.py \
+                  work/uatu.out work/instance.cnf
+          fi
+
+          IFS=',' read -r wall user sys rss < work/timing.csv
+          stat_value() {
+              local label="$1"
+              grep -F "$label" work/uatu.out | tail -n 1 | \
+                  awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}'
+          }
+          core=$(stat_value 'Core Clauses')
+          tier2=$(stat_value 'Tier2 Clauses')
+          local_count=$(stat_value 'Local Clauses')
+          reductions=$(stat_value 'Clause Reductions')
+          deleted=$(stat_value 'Deleted Clauses')
+          core_promotions=$(stat_value 'Core Promotions')
+          tier2_promotions=$(stat_value 'Tier2 Promotions')
+          tier2_demotions=$(stat_value 'Tier2 Demotions')
+
+          printf 'id,expected,result,correct,model_valid,wall_sec,user_sec,sys_sec,rss_kb,exit_code,hash,core,tier2,local,reductions,deleted,core_promotions,tier2_promotions,tier2_demotions\n' > result/result.csv
+          printf '%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+              "$BENCHMARK_ID" "$EXPECTED" "$actual" "$model_valid" \
+              "$wall" "$user" "$sys" "$rss" "$rc" "$BENCHMARK_HASH" \
+              "$core" "$tier2" "$local_count" "$reductions" "$deleted" \
+              "$core_promotions" "$tier2_promotions" "$tier2_demotions" \
+              >> result/result.csv
+          cat result/result.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiered-smoke-${{ matrix.id }}
+          path: result/result.csv
+          retention-days: 7
+
+  finalize:
+    needs: benchmark
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/v3-tiered-evaluation
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tiered-smoke-*
+          path: downloaded
+          merge-multiple: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tiered-implementation-validation
+          path: validation
+
+      - name: Aggregate validation results
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/aggregate_ver5_tiered.py
+
+      - name: Publish verified implementation
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/ver5-tiered-validation-v2.yml
+          rm -f .github/scripts/prepare_ver5_tiered.py
+          rm -f .github/scripts/validate_ver5_tiered.py
+          rm -f .github/scripts/aggregate_ver5_tiered.py
+          rm -f .github/scripts/verify_sat_model.py
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add -A README.md cpu/ver_5 evaluation \
+              .github/workflows .github/scripts
+          git commit -m 'validate ver_5 tiered clause management on SAT 2025'
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-tiered-validation-results
+          path: |
+            evaluation/ver5_tiered_smoke10.csv
+            evaluation/ver5_tiered_smoke10.md
+          retention-days: 7
