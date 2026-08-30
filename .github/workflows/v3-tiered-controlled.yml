@@ -1,0 +1,602 @@
+name: Reconstruct Controlled V3 Plus Tiered Clause Management
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-controlled.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-controlled
+  cancel-in-progress: false
+
+jobs:
+  reconstruct-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install validation dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+          git fetch origin \
+              main \
+              temp/v3-chb-evaluation \
+              temp/v3-recursive-evaluation \
+              temp/ver5-vs-minisat-100
+
+      - name: Extract the V3 baseline and prior feature variants
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/uatu-controlled
+          mkdir -p /tmp/uatu-controlled
+
+          extract_tree() {
+              local ref="$1"
+              local path="$2"
+              local destination="$3"
+              mkdir -p "$destination"
+              git archive "$ref:$path" | tar -x -C "$destination"
+          }
+
+          extract_tree origin/main cpu/ver_3 /tmp/uatu-controlled/base
+          extract_tree origin/temp/v3-chb-evaluation cpu/ver_5 \
+              /tmp/uatu-controlled/chb
+          extract_tree origin/temp/v3-recursive-evaluation cpu/ver_5 \
+              /tmp/uatu-controlled/recursive
+          extract_tree origin/temp/ver5-vs-minisat-100 cpu/ver_5 \
+              /tmp/uatu-controlled/donor
+
+      - name: Subtract CHB and recursive-minimization deltas from the combined donor
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import collections
+          import difflib
+          import hashlib
+          import json
+          import re
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          root = Path('/tmp/uatu-controlled')
+          base = root / 'base'
+          donor = root / 'donor'
+          output = root / 'output'
+          shutil.copytree(donor, output)
+
+          text_suffixes = {
+              '.c', '.cc', '.cpp', '.cxx', '.h', '.hh', '.hpp',
+              '.mk', '.md', '.py', '.sh', '.txt', '',
+          }
+
+          def files(directory):
+              return {
+                  path.relative_to(directory)
+                  for path in directory.rglob('*')
+                  if path.is_file()
+              }
+
+          def read_text(path):
+              return path.read_text(errors='strict')
+
+          def same_file(lhs, rhs):
+              if not lhs.exists() or not rhs.exists():
+                  return False
+              return lhs.read_bytes() == rhs.read_bytes()
+
+          def subtract_conflict(current_lines, feature_lines, base_lines):
+              result = list(current_lines)
+              matcher = difflib.SequenceMatcher(
+                  a=feature_lines,
+                  b=base_lines,
+                  autojunk=False,
+              )
+              for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
+                  if tag == 'equal':
+                      continue
+                  feature_chunk = feature_lines[i1:i2]
+                  base_chunk = base_lines[j1:j2]
+
+                  start = None
+                  if feature_chunk:
+                      for position in range(
+                          max(0, len(result) - len(feature_chunk) + 1)
+                      ):
+                          if result[position:position + len(feature_chunk)] == feature_chunk:
+                              start = position
+                              break
+                  if start is not None:
+                      result[start:start + len(feature_chunk)] = base_chunk
+                      continue
+
+                  removal = collections.Counter(feature_chunk)
+                  kept = []
+                  for line in result:
+                      if removal[line] > 0:
+                          removal[line] -= 1
+                      else:
+                          kept.append(line)
+                  result = kept
+                  for line in base_chunk:
+                      if line not in result:
+                          result.append(line)
+              return result
+
+          def resolve_diff3(text):
+              lines = text.splitlines(keepends=True)
+              output_lines = []
+              index = 0
+              while index < len(lines):
+                  if not lines[index].startswith('<<<<<<<'):
+                      output_lines.append(lines[index])
+                      index += 1
+                      continue
+
+                  index += 1
+                  current = []
+                  while index < len(lines) and not lines[index].startswith('|||||||'):
+                      current.append(lines[index])
+                      index += 1
+                  if index >= len(lines):
+                      raise RuntimeError('malformed diff3 conflict: missing base marker')
+                  index += 1
+
+                  feature = []
+                  while index < len(lines) and not lines[index].startswith('======='):
+                      feature.append(lines[index])
+                      index += 1
+                  if index >= len(lines):
+                      raise RuntimeError('malformed diff3 conflict: missing separator')
+                  index += 1
+
+                  baseline = []
+                  while index < len(lines) and not lines[index].startswith('>>>>>>>'):
+                      baseline.append(lines[index])
+                      index += 1
+                  if index >= len(lines):
+                      raise RuntimeError('malformed diff3 conflict: missing end marker')
+                  index += 1
+
+                  output_lines.extend(
+                      subtract_conflict(current, feature, baseline)
+                  )
+              return ''.join(output_lines)
+
+          def subtract_feature(feature_directory, feature_name):
+              changed_files = sorted(files(base) | files(feature_directory))
+              changed_files = [
+                  relative
+                  for relative in changed_files
+                  if not same_file(base / relative, feature_directory / relative)
+              ]
+              if not changed_files:
+                  raise RuntimeError(f'no {feature_name} delta found')
+
+              for relative in changed_files:
+                  base_path = base / relative
+                  feature_path = feature_directory / relative
+                  output_path = output / relative
+
+                  if not base_path.exists() and feature_path.exists():
+                      if output_path.exists():
+                          output_path.unlink()
+                      continue
+
+                  if base_path.exists() and not feature_path.exists():
+                      output_path.parent.mkdir(parents=True, exist_ok=True)
+                      if not output_path.exists():
+                          shutil.copy2(base_path, output_path)
+                      continue
+
+                  if relative.suffix not in text_suffixes:
+                      raise RuntimeError(
+                          f'cannot subtract binary {feature_name} file: {relative}'
+                      )
+                  if not output_path.exists():
+                      raise RuntimeError(
+                          f'donor is missing changed {feature_name} file: {relative}'
+                      )
+
+                  current = output_path.read_text()
+                  feature = feature_path.read_text()
+                  baseline = base_path.read_text()
+                  completed = subprocess.run(
+                      [
+                          'git', 'merge-file', '-p', '--diff3',
+                          str(output_path),
+                          str(feature_path),
+                          str(base_path),
+                      ],
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.PIPE,
+                      check=False,
+                  )
+                  if completed.returncode not in (0, 1):
+                      raise RuntimeError(
+                          f'git merge-file failed for {relative}: '
+                          + completed.stderr
+                      )
+                  merged = completed.stdout
+                  if completed.returncode == 1:
+                      merged = resolve_diff3(merged)
+                  if any(marker in merged for marker in ('<<<<<<<', '|||||||', '=======')):
+                      raise RuntimeError(
+                          f'unresolved {feature_name} conflict in {relative}'
+                      )
+                  output_path.write_text(merged)
+
+              return [str(relative) for relative in changed_files]
+
+          chb_changed = subtract_feature(root / 'chb', 'CHB')
+          recursive_changed = subtract_feature(
+              root / 'recursive',
+              'recursive minimization',
+          )
+
+          for path in list(output.rglob('*')):
+              if path.is_dir() and not any(path.iterdir()):
+                  path.rmdir()
+
+          source_paths = [
+              path for path in output.rglob('*')
+              if path.is_file()
+              and path.suffix in {'.c', '.cc', '.cpp', '.cxx', '.h', '.hh', '.hpp'}
+          ]
+          source_text = '\n'.join(path.read_text(errors='ignore') for path in source_paths)
+          forbidden = [
+              r'\bCHB\b',
+              r'\bchb[_A-Za-z0-9]*\b',
+              r'\brecursiveMinimi[sz]e\b',
+              r'\brecursive_minimi[sz]e\b',
+          ]
+          for pattern in forbidden:
+              if re.search(pattern, source_text):
+                  raise RuntimeError(f'forbidden feature remains: {pattern}')
+
+          tier_patterns = [
+              r'\btier',
+              r'\bTIER',
+              r'\bcore',
+              r'\bCORE',
+              r'\blbd',
+              r'\bLBD',
+              r'reduceDB',
+              r'reduce_clause',
+          ]
+          tier_hits = sum(
+              len(re.findall(pattern, source_text))
+              for pattern in tier_patterns
+          )
+          if tier_hits < 8:
+              raise RuntimeError(
+                  f'tiered-clause donor logic was not preserved: hits={tier_hits}'
+              )
+
+          def digest_tree(directory):
+              digest = hashlib.sha256()
+              for relative in sorted(files(directory)):
+                  digest.update(str(relative).encode())
+                  digest.update((directory / relative).read_bytes())
+              return digest.hexdigest()
+
+          lineage = {
+              'construction': (
+                  'combined Ver5 donor minus independently measured '
+                  'V3+CHB and V3+Recursive-Minimization deltas'
+              ),
+              'base_tree_sha256': digest_tree(base),
+              'chb_tree_sha256': digest_tree(root / 'chb'),
+              'recursive_tree_sha256': digest_tree(root / 'recursive'),
+              'donor_tree_sha256': digest_tree(donor),
+              'result_tree_sha256': digest_tree(output),
+              'chb_changed_files': chb_changed,
+              'recursive_changed_files': recursive_changed,
+              'tier_keyword_hits': tier_hits,
+          }
+          Path('/tmp/uatu-controlled/lineage.json').write_text(
+              json.dumps(lineage, indent=2) + '\n'
+          )
+          print(json.dumps(lineage, indent=2))
+          PY
+
+          rm -rf cpu/ver_5
+          cp -a /tmp/uatu-controlled/output cpu/ver_5
+
+      - name: Verify controlled-delta properties
+        run: |
+          set -euo pipefail
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/chb.h
+          test ! -e cpu/ver_5/recursive.cpp
+          test ! -e cpu/ver_5/recursive.h
+          ! grep -R -n -E '\b(CHB|chb_[A-Za-z0-9_]*|recursiveMinimi[sz]e|recursive_minimi[sz]e)\b' \
+              cpu/ver_5 --include='*.cpp' --include='*.h' --include='Makefile'
+          if diff -qr /tmp/uatu-controlled/base cpu/ver_5 >/tmp/base_vs_tiered.diff; then
+              echo 'Ver5 unexpectedly equals V3 exactly.' >&2
+              exit 1
+          fi
+          grep -R -n -E '(tier|TIER|LBD|lbd|reduceDB|reduce_clause)' \
+              cpu/ver_5 --include='*.cpp' --include='*.h'
+
+      - name: Build with strict warnings
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all
+
+      - name: Run deterministic SAT and UNSAT regression tests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import itertools
+          import os
+          import random
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          solver = 'cpu/ver_5/obj/uatu_solver'
+
+          def brute_force(variable_count, clauses):
+              for values in itertools.product((False, True), repeat=variable_count):
+                  if all(
+                      any(values[abs(literal) - 1] == (literal > 0)
+                          for literal in clause)
+                      for clause in clauses
+                  ):
+                      return True
+              return False
+
+          def parse_result(text):
+              lines = {line.strip() for line in text.splitlines()}
+              if 'SATISFIABLE' in lines:
+                  return 'sat'
+              if 'UNSATISFIABLE' in lines:
+                  return 'unsat'
+              if 'UNSOLVED' in lines:
+                  return 'unsolved'
+              return 'error'
+
+          def parse_model(text):
+              model = []
+              for line in text.splitlines():
+                  fields = line.split()
+                  if not fields or fields[-1] != '0':
+                      continue
+                  try:
+                      values = [int(value) for value in fields]
+                  except ValueError:
+                      continue
+                  if len(values) > 1:
+                      model = values[:-1]
+              return {abs(value): value > 0 for value in model if value}
+
+          def verify(clauses, model):
+              return bool(model) and all(
+                  any(model.get(abs(literal), False) == (literal > 0)
+                      for literal in clause)
+                  for clause in clauses
+              )
+
+          fixed = [
+              (1, [[1]], 'sat'),
+              (1, [[1], [-1]], 'unsat'),
+              (3, [[1], [-1, 2], [-2, 3]], 'sat'),
+              (2, [[1, 2], [-1, 2], [1, -2], [-1, -2]], 'unsat'),
+          ]
+          rng = random.Random(20250830)
+          cases = list(fixed)
+          for _ in range(80):
+              variable_count = rng.randint(1, 8)
+              clauses = []
+              for _ in range(rng.randint(1, 28)):
+                  width = rng.randint(1, min(4, variable_count))
+                  variables = rng.sample(range(1, variable_count + 1), width)
+                  clauses.append([
+                      variable if rng.randrange(2) else -variable
+                      for variable in variables
+                  ])
+              expected = 'sat' if brute_force(variable_count, clauses) else 'unsat'
+              cases.append((variable_count, clauses, expected))
+
+          with tempfile.TemporaryDirectory() as temporary:
+              directory = Path(temporary)
+              for index, (variable_count, clauses, expected) in enumerate(cases):
+                  path = directory / f'{index}.cnf'
+                  with path.open('w') as output:
+                      output.write(f'p cnf {variable_count} {len(clauses)}\n')
+                      for clause in clauses:
+                          output.write(' '.join(map(str, clause)) + ' 0\n')
+                  environment = os.environ.copy()
+                  environment['UATU_TIMEOUT_SEC'] = '10'
+                  environment['UATU_PRINT_MODEL'] = '1'
+                  completed = subprocess.run(
+                      [solver, str(path)],
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      timeout=15,
+                      env=environment,
+                      check=False,
+                  )
+                  result = parse_result(completed.stdout)
+                  if result != expected:
+                      raise SystemExit(
+                          f'case {index}: expected {expected}, got {result}\n'
+                          + completed.stdout[-4000:]
+                      )
+                  if result == 'sat' and not verify(
+                      clauses,
+                      parse_model(completed.stdout),
+                  ):
+                      raise SystemExit(f'case {index}: invalid model')
+          print(f'validated {len(cases)} deterministic cases')
+          PY
+
+      - name: Fetch prior fixed evaluation data
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          ref = urllib.parse.quote('temp/ver5-vs-minisat-100', safe='')
+          url = (
+              'https://api.github.com/repos/SeMinLim/uatu/contents/'
+              'evaluation/ver5_vs_minisat_100_raw.csv?ref=' + ref
+          )
+          request = urllib.request.Request(
+              url,
+              headers={
+                  'Accept': 'application/vnd.github+json',
+                  'User-Agent': 'uatu-controlled-tiered-validation',
+              },
+          )
+          payload = json.load(urllib.request.urlopen(request, timeout=120))
+          Path('/tmp/ver5_vs_minisat_100_raw.csv').write_bytes(
+              base64.b64decode(payload['content'])
+          )
+          PY
+
+      - name: Validate on 10 SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          import subprocess
+          import yaml
+          from pathlib import Path
+
+          try:
+              import yaml
+          except ImportError:
+              subprocess.run(
+                  ['python3', '-m', 'pip', 'install', '--quiet', 'pyyaml'],
+                  check=True,
+              )
+              import yaml
+
+          workflow = yaml.safe_load(
+              Path('.github/workflows/v3-tiered-bootstrap.yml').read_text()
+          )
+          steps = workflow['jobs']['implement-and-validate']['steps']
+          for step in steps:
+              if step.get('name') == 'Validate on 10 SAT Competition 2025 benchmarks':
+                  script = step['run']
+                  script = re.sub(
+                      r"raw_url = \(.*?\n\s*\)",
+                      "raw_url = 'file:///tmp/ver5_vs_minisat_100_raw.csv'",
+                      script,
+                      count=1,
+                      flags=re.DOTALL,
+                  )
+                  subprocess.run(['bash', '-lc', script], check=True)
+                  break
+          else:
+              raise SystemExit('benchmark validation step not found')
+          PY
+
+      - name: Record controlled lineage and completion
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import json
+          import subprocess
+          from pathlib import Path
+
+          lineage = json.loads(
+              Path('/tmp/uatu-controlled/lineage.json').read_text()
+          )
+          lineage['base_ref'] = subprocess.check_output(
+              ['git', 'rev-parse', 'origin/main'],
+              text=True,
+          ).strip()
+          lineage['chb_ref'] = subprocess.check_output(
+              ['git', 'rev-parse', 'origin/temp/v3-chb-evaluation'],
+              text=True,
+          ).strip()
+          lineage['recursive_ref'] = subprocess.check_output(
+              ['git', 'rev-parse', 'origin/temp/v3-recursive-evaluation'],
+              text=True,
+          ).strip()
+          lineage['donor_ref'] = subprocess.check_output(
+              ['git', 'rev-parse', 'origin/temp/ver5-vs-minisat-100'],
+              text=True,
+          ).strip()
+          Path('evaluation/ver5_tiered_lineage.json').write_text(
+              json.dumps(lineage, indent=2) + '\n'
+          )
+
+          rows = list(csv.DictReader(
+              Path('evaluation/ver5_tiered_10_raw.csv').open(newline='')
+          ))
+          if len(rows) != 20 or any(row['correct'] != '1' for row in rows):
+              raise SystemExit('10-instance validation is incomplete')
+          summary = {
+              'variant': 'V3 + Tiered Clause Management',
+              'construction': 'controlled feature-delta subtraction',
+              'chb_enabled': False,
+              'recursive_minimization_enabled': False,
+              'tiered_clause_management_enabled': True,
+              'sat_competition_2025_instances': 10,
+              'sat_instances': 5,
+              'unsat_instances': 5,
+              'ver5_correct': sum(
+                  row['solver'] == 'ver5-tiered' and row['correct'] == '1'
+                  for row in rows
+              ),
+              'minisat_correct': sum(
+                  row['solver'] == 'minisat' and row['correct'] == '1'
+                  for row in rows
+              ),
+              'strict_build': 'pass',
+              'deterministic_tests': 'pass',
+              'lineage_file': 'evaluation/ver5_tiered_lineage.json',
+          }
+          Path('evaluation/ver5_tiered_10_complete.json').write_text(
+              json.dumps(summary, indent=2) + '\n'
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Commit the controlled implementation and evidence
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_5 \
+                  evaluation/ver5_tiered_10_manifest.csv \
+                  evaluation/ver5_tiered_10_raw.csv \
+                  evaluation/ver5_tiered_10_report.md \
+                  evaluation/ver5_tiered_10_complete.json \
+                  evaluation/ver5_tiered_lineage.json
+          git commit -m 'feat: reconstruct controlled V3 plus tiered Ver5'
+          git pull --rebase origin temp/v3-tiered-evaluation
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v3-tiered-controlled-validation
+          path: |
+            evaluation/ver5_tiered_10_manifest.csv
+            evaluation/ver5_tiered_10_raw.csv
+            evaluation/ver5_tiered_10_report.md
+            evaluation/ver5_tiered_10_complete.json
+            evaluation/ver5_tiered_lineage.json
+          retention-days: 7
