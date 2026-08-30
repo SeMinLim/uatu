@@ -19,11 +19,14 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 |---|---|
 | `cpu/ver_1` | Original compact CDCL solver and reference implementation |
 | `cpu/ver_2` | Improved solver preserving the original search policy, with lower profiling overhead, one-step learned-clause minimization, and deterministic clause reduction |
+| `cpu/ver_3` | Usage-aware learned-clause retention with activity and dynamic LBD updates |
+| `cpu/ver_4` | Ver. 3 with CHB decision selection |
+| `cpu/ver_5` | Ver. 3 with CORE, TIER2, and LOCAL learned-clause management |
 
 ## Build and Run
 
 ```bash
-cd cpu/ver_1   # or cpu/ver_2
+cd cpu/ver_1   # or cpu/ver_2, cpu/ver_3, cpu/ver_4, or cpu/ver_5
 make
 ./obj/uatu_solver <instance.cnf>
 ```

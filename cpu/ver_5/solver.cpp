@@ -88,6 +88,7 @@ void Solver::initialize( void ) {
         reductionRuns = 0;
         deletedClauses = minimizedLiterals = 0;
         clauseActivityBumps = dynamicLBDUpdates = 0;
+        corePromotions = tier2Promotions = tier2Demotions = 0;
         threshold = propagated = time_stamp = 0;
         lbdStamp = 0;
         fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
@@ -104,6 +105,31 @@ void Solver::initialize( void ) {
         rephase_inc = 100000;
         rephase_limit = 100000;
         reduce_limit = 8192;
+        reduceStep = 512;
+        coreLBDLimit = 3;
+        tier2LBDLimit = 6;
+        tier2StaleLimit = 30000;
+        if ( const char *env = getenv("UATU_REDUCE_INITIAL") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) reduce_limit = parsed;
+        }
+        if ( const char *env = getenv("UATU_REDUCE_STEP") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) reduceStep = parsed;
+        }
+        if ( const char *env = getenv("UATU_CORE_LBD") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) coreLBDLimit = parsed;
+        }
+        if ( const char *env = getenv("UATU_TIER2_LBD") ) {
+                const int parsed = atoi(env);
+                if ( parsed >= coreLBDLimit ) tier2LBDLimit = parsed;
+        }
+        if ( const char *env = getenv("UATU_TIER2_STALE") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) tier2StaleLimit = parsed;
+        }
+        if ( tier2LBDLimit < coreLBDLimit ) tier2LBDLimit = coreLBDLimit;
 
         vsids.initialize(activity);
         value[0] = local_best[0] = saved[0] = 0;
@@ -336,6 +362,35 @@ void Solver::update_score( int var, double coeff ) {
     	if ( vsids.inHeap(var) ) vsids.update(var);
 }
 
+// Select a learned-clause tier from its current LBD
+int Solver::selectClauseTier( int lbd ) const {
+	if ( lbd > 0 && lbd <= coreLBDLimit ) return CLAUSE_CORE;
+	if ( lbd > 0 && lbd <= tier2LBDLimit ) return CLAUSE_TIER2;
+	return CLAUSE_LOCAL;
+}
+
+// Initialize tier metadata for a newly learned clause
+void Solver::initializeLearnedClause( int cref, int lbd ) {
+	Clause &clause = clauseDB[cref];
+	clause.lbd = lbd;
+	clause.tier = selectClauseTier(lbd);
+	clause.touched = conflicts;
+}
+
+// Promote a learned clause when its dynamic LBD crosses a tier boundary
+void Solver::updateClauseTier( int cref ) {
+	Clause &clause = clauseDB[cref];
+	const int newTier = selectClauseTier(clause.lbd);
+	if ( newTier >= clause.tier ) return;
+
+	if ( newTier == CLAUSE_CORE ) {
+		corePromotions ++;
+	} else if ( newTier == CLAUSE_TIER2 ) {
+		tier2Promotions ++;
+	}
+	clause.tier = newTier;
+}
+
 // Update learnt-clause activity
 void Solver::bumpClauseActivity( int cref ) {
         if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
@@ -373,18 +428,20 @@ int Solver::calculateClauseLBD( const Clause &clause ) {
         return currentLBD;
 }
 
-// Update learnt-clause usage and dynamic LBD
+// Update learnt-clause usage, dynamic LBD, and tier
 void Solver::updateClauseQuality( int cref ) {
-        if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
+	if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
 
-        bumpClauseActivity(cref);
+	bumpClauseActivity(cref);
 
-        Clause &clause = clauseDB[cref];
-        const int currentLBD = calculateClauseLBD(clause);
-        if ( currentLBD > 0 && (clause.lbd == 0 || currentLBD < clause.lbd) ) {
-                clause.lbd = currentLBD;
-                dynamicLBDUpdates ++;
-        }
+	Clause &clause = clauseDB[cref];
+	clause.touched = conflicts;
+	const int currentLBD = calculateClauseLBD(clause);
+	if ( currentLBD > 0 && (clause.lbd == 0 || currentLBD < clause.lbd) ) {
+		clause.lbd = currentLBD;
+		dynamicLBDUpdates ++;
+	}
+	updateClauseTier(cref);
 }
 
 // Conflict analysis
@@ -392,11 +449,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         ++time_stamp;
         learnt.clear();
 
-        if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
-                fprintf( stderr, "internal error: invalid conflict clause\n" );
-                return 30;
-        }
-
+        // First-UIP analysis always starts at the current decision level.
         const int conflictLevel = static_cast<int>(decVarInTrail.size());
         if ( conflictLevel == 0 ) return 20;
 
@@ -408,11 +461,6 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         bump.reserve(32);
 
         do {
-                if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
-                        fprintf( stderr, "internal error: invalid reason clause\n" );
-                        return 30;
-                }
-
                 updateClauseQuality(conflict);
                 Clause &clause = clauseDB[conflict];
                 const int begin = resolveLiteral == 0 ? 0 : 1;
@@ -431,23 +479,14 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 while ( trailIndex >= 0 &&
                         mark[abs(trail[trailIndex])] != time_stamp ) --trailIndex;
                 if ( trailIndex < 0 ) {
-                        fprintf( stderr, "internal error: malformed implication graph\n" );
-                        return 30;
+                        fprintf(stderr, "internal error: malformed implication graph\n");
+                        abort();
                 }
 
-                resolveLiteral = trail[trailIndex --];
+                resolveLiteral = trail[trailIndex--];
+                conflict = reason[abs(resolveLiteral)];
                 mark[abs(resolveLiteral)] = 0;
                 --unresolved;
-
-                if ( unresolved > 0 ) {
-                        const int nextReason = reason[abs(resolveLiteral)];
-                        if ( nextReason < 0 ||
-                             nextReason >= static_cast<int>(clauseDB.size()) ) {
-                                fprintf( stderr, "internal error: invalid reason clause\n" );
-                                return 30;
-                        }
-                        conflict = nextReason;
-                }
         } while ( unresolved > 0 );
 
         learnt[0] = -resolveLiteral;
@@ -463,8 +502,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         const int literal = learnt[i];
                         const int variable = abs(literal);
                         const int reasonClause = reason[variable];
-                        bool removable = reasonClause >= 0 &&
-                                reasonClause < static_cast<int>(clauseDB.size());
+                        bool removable = reasonClause >= 0;
 
                         if ( removable ) {
                                 const Clause &reasonData = clauseDB[reasonClause];
@@ -479,7 +517,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         }
 
                         if ( removable ) ++minimizedLiterals;
-                        else learnt[out ++] = literal;
+                        else learnt[out++] = literal;
                 }
                 learnt.resize(out);
         }
@@ -496,7 +534,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
         if ( lbd_queue_size < 50 ) ++lbd_queue_size;
         else fast_lbd_sum -= lbd_queue[lbd_queue_pos];
-        lbd_queue[lbd_queue_pos ++] = lbd;
+        lbd_queue[lbd_queue_pos++] = lbd;
         if ( lbd_queue_pos == 50 ) lbd_queue_pos = 0;
         fast_lbd_sum += lbd;
         slow_lbd_sum += lbd > 50 ? 50 : lbd;
@@ -522,23 +560,28 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
 // Backtracking
 void Solver::backtrack( int backtrackLevel ) {
-        if ( static_cast<int>(decVarInTrail.size()) <= backtrackLevel ) return;
+    	if ( (int)decVarInTrail.size() <= backtrackLevel ) {
+		return;
+	} else {
+		for ( int i = trail.size() - 1; i >= decVarInTrail[backtrackLevel]; i -- ) {
+			// Delete assignment
+			int v = abs(trail[i]);
+			value[v] = 0;
+			reason[v] = -1;
+			level[v] = 0;
 
-        const int trailLimit = decVarInTrail[backtrackLevel];
-        for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
-                const int variable = abs(trail[i]);
+			// Phase saving
+			saved[v] = trail[i] > 0 ? 1 : -1;
+			
+			// Store variable back to VSIDS heap
+			if ( !vsids.inHeap(v) ) vsids.insert(v);
+		}
 
-                saved[variable] = trail[i] > 0 ? 1 : -1;
-                value[variable] = 0;
-                reason[variable] = -1;
-                level[variable] = 0;
-
-                if ( !vsids.inHeap(variable) ) vsids.insert(variable);
-        }
-
-        propagated = trailLimit;
-        trail.resize(propagated);
-        decVarInTrail.resize(backtrackLevel);
+		// Parameter and array update
+		propagated = decVarInTrail[backtrackLevel];
+		trail.resize(propagated);
+		decVarInTrail.resize(backtrackLevel);
+	}
 }
 
 // Reset recent LBD statistics
@@ -563,79 +606,90 @@ void Solver::rephase() {
         ++rephases;
 }
 
-// Clause deletion
+// Tiered learned-clause reduction
 void Solver::reduce() {
-        // The only heuristic that performs a root backtrack.
-        backtrack(0);
-        reduces = 0;
-        reduce_limit += 512;
-        ++reductionRuns;
+	backtrack(0);
+	reduces = 0;
+	reduce_limit += reduceStep;
+	reductionRuns ++;
 
-        const int oldSize = static_cast<int>(clauseDB.size());
-        reduceMap.assign(oldSize, -1);
+	const int oldSize = static_cast<int>(clauseDB.size());
+	reduceMap.assign(oldSize, -1);
 
-        std::vector<unsigned char> locked(oldSize, 0);
-        for ( int literal : trail ) {
-                const int clause = reason[abs(literal)];
-                if ( clause >= origin_clauses && clause < oldSize ) locked[clause] = 1;
-        }
+	std::vector<unsigned char> locked(oldSize, 0);
+	for ( int literal : trail ) {
+		const int clause = reason[abs(literal)];
+		if ( clause >= origin_clauses && clause < oldSize ) locked[clause] = 1;
+	}
 
-        std::vector<int> candidates;
-        candidates.reserve(oldSize - origin_clauses);
-        for ( int i = origin_clauses; i < oldSize; i ++ ) {
-                if ( !locked[i] && clauseDB[i].lbd >= 5 ) candidates.push_back(i);
-        }
+	std::vector<int> localCandidates;
+	localCandidates.reserve(oldSize - origin_clauses);
+	for ( int i = origin_clauses; i < oldSize; i ++ ) {
+		Clause &clause = clauseDB[i];
+		if ( locked[i] || clause.tier == CLAUSE_CORE ) continue;
 
-        // Low activity means the clause contributed less to recent conflict analysis.
-        std::sort(candidates.begin(), candidates.end(), [&]( int a, int b ) {
-                if ( clauseDB[a].activity != clauseDB[b].activity ) {
-                        return clauseDB[a].activity < clauseDB[b].activity;
-                }
-                if ( clauseDB[a].lbd != clauseDB[b].lbd ) {
-                        return clauseDB[a].lbd > clauseDB[b].lbd;
-                }
-                if ( clauseDB[a].literals.size() != clauseDB[b].literals.size() ) {
-                        return clauseDB[a].literals.size() > clauseDB[b].literals.size();
-                }
-                return a < b;
-        });
+		if ( clause.tier == CLAUSE_TIER2 ) {
+			const int age = conflicts - clause.touched;
+			if ( age <= tier2StaleLimit ) continue;
+			clause.tier = CLAUSE_LOCAL;
+			tier2Demotions ++;
+		}
 
-        std::vector<unsigned char> erase(oldSize, 0);
-        const size_t deleteCount = candidates.size() / 2;
-        for ( size_t i = 0; i < deleteCount; i ++ ) erase[candidates[i]] = 1;
-        deletedClauses += static_cast<long long>(deleteCount);
+		localCandidates.push_back(i);
+	}
 
-        int newSize = origin_clauses;
-        for ( int i = 0; i < origin_clauses; i ++ ) reduceMap[i] = i;
-        for ( int i = origin_clauses; i < oldSize; i ++ ) {
-                if ( erase[i] ) continue;
-                if ( newSize != i ) clauseDB[newSize] = std::move(clauseDB[i]);
-                reduceMap[i] = newSize ++;
-        }
-        clauseDB.erase(clauseDB.begin() + newSize, clauseDB.end());
+	std::sort(localCandidates.begin(), localCandidates.end(), [&]( int a, int b ) {
+		if ( clauseDB[a].activity != clauseDB[b].activity ) {
+			return clauseDB[a].activity < clauseDB[b].activity;
+		}
+		if ( clauseDB[a].lbd != clauseDB[b].lbd ) {
+			return clauseDB[a].lbd > clauseDB[b].lbd;
+		}
+		if ( clauseDB[a].literals.size() != clauseDB[b].literals.size() ) {
+			return clauseDB[a].literals.size() > clauseDB[b].literals.size();
+		}
+		if ( clauseDB[a].touched != clauseDB[b].touched ) {
+			return clauseDB[a].touched < clauseDB[b].touched;
+		}
+		return a < b;
+	});
 
-        for ( int literal : trail ) {
-                const int variable = abs(literal);
-                if ( reason[variable] >= origin_clauses ) {
-                        reason[variable] = reduceMap[reason[variable]];
-                }
-        }
+	std::vector<unsigned char> erase(oldSize, 0);
+	const size_t deleteCount = localCandidates.size() / 2;
+	for ( size_t i = 0; i < deleteCount; i ++ ) erase[localCandidates[i]] = 1;
+	deletedClauses += static_cast<long long>(deleteCount);
 
-        for ( int literal = -vars; literal <= vars; literal ++ ) {
-                if ( literal == 0 ) continue;
-                std::vector<WL> &watchers = WatchedLiterals(literal);
-                int out = 0;
-                for ( int i = 0; i < static_cast<int>(watchers.size()); i ++ ) {
-                        const int oldIndex = watchers[i].clauseIdx;
-                        const int newIndex = oldIndex < origin_clauses
-                                ? oldIndex : reduceMap[oldIndex];
-                        if ( newIndex == -1 ) continue;
-                        watchers[i].clauseIdx = newIndex;
-                        if ( out != i ) watchers[out] = watchers[i];
-                        ++out;
-                }
-                watchers.resize(out);
-        }
+	int newSize = origin_clauses;
+	for ( int i = 0; i < origin_clauses; i ++ ) reduceMap[i] = i;
+	for ( int i = origin_clauses; i < oldSize; i ++ ) {
+		if ( erase[i] ) continue;
+		if ( newSize != i ) clauseDB[newSize] = std::move(clauseDB[i]);
+		reduceMap[i] = newSize ++;
+	}
+	clauseDB.erase(clauseDB.begin() + newSize, clauseDB.end());
+
+	for ( int literal : trail ) {
+		const int variable = abs(literal);
+		if ( reason[variable] >= origin_clauses ) {
+			reason[variable] = reduceMap[reason[variable]];
+		}
+	}
+
+	for ( int literal = -vars; literal <= vars; literal ++ ) {
+		if ( literal == 0 ) continue;
+		std::vector<WL> &watchers = WatchedLiterals(literal);
+		int out = 0;
+		for ( int i = 0; i < static_cast<int>(watchers.size()); i ++ ) {
+			const int oldIndex = watchers[i].clauseIdx;
+			const int newIndex = oldIndex < origin_clauses
+				? oldIndex : reduceMap[oldIndex];
+			if ( newIndex == -1 ) continue;
+			watchers[i].clauseIdx = newIndex;
+			if ( out != i ) watchers[out] = watchers[i];
+			out ++;
+		}
+		watchers.resize(out);
+	}
 }
 
 // Solver
@@ -670,14 +724,14 @@ int Solver::solve() {
                         int backtrackLevel = 0;
                         int lbd = 0;
                         result = analyze(conflictClause, backtrackLevel, lbd);
-                        if ( result != 0 ) break;
+                        if ( result == 20 ) break;
 
                         backtrack(backtrackLevel);
                         if ( learnt.size() == 1 ) {
                                 assign(learnt[0], 0, -1);
                         } else {
                                 const int learnedClause = add_clause(learnt);
-                                clauseDB[learnedClause].lbd = lbd;
+                                initializeLearnedClause(learnedClause, lbd);
                                 assign(learnt[0], backtrackLevel, learnedClause);
                         }
 

@@ -1,6 +1,3 @@
-#ifndef UATU_VER5_SOLVER_H
-#define UATU_VER5_SOLVER_H
-
 #include <sys/resource.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -15,6 +12,14 @@
 
 #define Value(literal) (literal > 0 ? value[literal] : -value[-literal])
 #define WatchedLiterals(id) (watched_literals[vars + id])
+
+
+enum ClauseTier {
+	CLAUSE_ORIGINAL = 0,
+	CLAUSE_CORE = 1,
+	CLAUSE_TIER2 = 2,
+	CLAUSE_LOCAL = 3
+};
 
 
 // Heap data structure (max heap)
@@ -97,13 +102,18 @@ public:
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
+	// Learned-clause retention tier
+	int tier;
+	// Last conflict where the clause participated in analysis
+	int touched;
     	// Literals in a clause
 	std::vector<int> literals;
 	// Overloading array operator
 	// Return a certain literal in a clause
     	int& operator [] ( int index ) { return literals[index]; }
 	// Initialize clause metadata and resize literal array
-    	Clause( int sz ): lbd(0), activity(0.0), useCount(0) { literals.resize(sz); }
+    	Clause( int sz ): lbd(0), activity(0.0), useCount(0),
+	                       tier(CLAUSE_ORIGINAL), touched(0) { literals.resize(sz); }
 };
 
 
@@ -134,10 +144,12 @@ public:
 	int decides, unitPropagations;                   // The number of decisions and unit propagations
 	int bcpFunctionCalls;                            // The number of BCP function calls
     	int lbdResets, rephases, reduces;                // Parameters for LBD reset, soft rephase, and reduce
-    	int rephase_inc, rephase_limit, reduce_limit;   // Parameters for rephase and reduce
+    	int rephase_inc, rephase_limit, reduce_limit, reduceStep;
+	int coreLBDLimit, tier2LBDLimit, tier2StaleLimit;
     	int reductionRuns;
 	long long deletedClauses, minimizedLiterals;
 	long long clauseActivityBumps, dynamicLBDUpdates;
+	long long corePromotions, tier2Promotions, tier2Demotions;
     	int threshold;                                  // A threshold for updating the local_best phase
     	int propagated;                                 // The number of propagated literals in trail
     	int time_stamp;                                 // Parameter for conflict analysis and LBD calculation
@@ -172,6 +184,9 @@ public:
     	int  parse( char *filename );                             // Read CNF file
 	int  decide();                                            // Pick decision variable based on VSIDS
 	void update_score( int var, double coeff );               // Update variable activity
+	int  selectClauseTier( int lbd ) const;                    // Select tier from LBD
+	void initializeLearnedClause( int cref, int lbd );         // Initialize learned-clause tier
+	void updateClauseTier( int cref );                         // Promote a learned clause
 	void bumpClauseActivity( int cref );                       // Update learnt-clause activity
 	int  calculateClauseLBD( const Clause &clause );           // Calculate current LBD
 	void updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD
@@ -190,5 +205,3 @@ public:
 uint8_t *read_whitespace( uint8_t *p );
 uint8_t *read_until_new_line( uint8_t *p );
 uint8_t *read_int( uint8_t *p, int *i );
-
-#endif
