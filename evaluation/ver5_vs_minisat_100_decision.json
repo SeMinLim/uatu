@@ -1,0 +1,112 @@
+{
+  "beats_minisat": false,
+  "comparison_rule": "more solved, then lower PAR-2",
+  "timeout_seconds": 1000,
+  "par2_speedup": 0.975559558243405,
+  "both_solved_geometric_speedup": 0.7669706415232831,
+  "both_solved_count": 34,
+  "ver5_only_solved": [
+    4,
+    6,
+    33,
+    35,
+    37,
+    38,
+    47,
+    61,
+    62,
+    67,
+    93
+  ],
+  "minisat_only_solved": [
+    0,
+    2,
+    9,
+    19,
+    23,
+    45,
+    50,
+    51,
+    65,
+    83,
+    87
+  ],
+  "ver5_faster_on_both_solved": 14,
+  "minisat_faster_on_both_solved": 20,
+  "combined_summary": [
+    {
+      "solver": "minisat",
+      "source": "combined",
+      "instances": 100,
+      "solved": 45,
+      "sat": 25,
+      "unsat": 20,
+      "wrong": 0,
+      "par2": 1180.6092999999998,
+      "solved_time": 8060.93,
+      "peak_rss_kb": 11883340
+    },
+    {
+      "solver": "ver5",
+      "source": "combined",
+      "instances": 100,
+      "solved": 45,
+      "sat": 25,
+      "unsat": 20,
+      "wrong": 0,
+      "par2": 1210.1868,
+      "solved_time": 11018.68,
+      "peak_rss_kb": 10005196
+    }
+  ],
+  "split_summary": [
+    {
+      "solver": "minisat",
+      "source": "historical",
+      "instances": 50,
+      "solved": 20,
+      "sat": 14,
+      "unsat": 6,
+      "wrong": 0,
+      "par2": 1268.5516,
+      "solved_time": 3427.58,
+      "peak_rss_kb": 8262280
+    },
+    {
+      "solver": "ver5",
+      "source": "historical",
+      "instances": 50,
+      "solved": 21,
+      "sat": 12,
+      "unsat": 9,
+      "wrong": 0,
+      "par2": 1284.2008,
+      "solved_time": 6210.04,
+      "peak_rss_kb": 10005196
+    },
+    {
+      "solver": "minisat",
+      "source": "new",
+      "instances": 50,
+      "solved": 25,
+      "sat": 11,
+      "unsat": 14,
+      "wrong": 0,
+      "par2": 1092.667,
+      "solved_time": 4633.35,
+      "peak_rss_kb": 11883340
+    },
+    {
+      "solver": "ver5",
+      "source": "new",
+      "instances": 50,
+      "solved": 24,
+      "sat": 13,
+      "unsat": 11,
+      "wrong": 0,
+      "par2": 1136.1728,
+      "solved_time": 4808.64,
+      "peak_rss_kb": 5809732
+    }
+  ]
+}
