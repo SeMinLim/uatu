@@ -1,0 +1,175 @@
+name: Sanitize Controlled V3 Tiered Ver5
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-controlled-sanitizer.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-controlled-sanitizer
+  cancel-in-progress: false
+
+jobs:
+  sanitize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Synchronize controlled implementation
+        run: |
+          set -euo pipefail
+          git fetch origin main temp/v3-tiered-evaluation
+          git checkout -B temp/v3-tiered-evaluation \
+              origin/temp/v3-tiered-evaluation
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          completion = json.loads(
+              Path('evaluation/ver5_tiered_10_complete.json').read_text()
+          )
+          if completion.get('construction') != 'controlled feature-delta subtraction':
+              raise SystemExit('controlled implementation is not present')
+          if completion.get('ver5_correct') != 10:
+              raise SystemExit('10-instance validation is not complete')
+          PY
+
+      - name: Build with AddressSanitizer and UndefinedBehaviorSanitizer
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean
+          make -C cpu/ver_5 \
+              CXXFLAGS='-std=c++17 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer'
+
+      - name: Run sanitizer regression set
+        run: |
+          set -euo pipefail
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+          python3 - <<'PY'
+          import itertools
+          import os
+          import random
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          solver = 'cpu/ver_5/obj/uatu_solver'
+
+          def brute_force(variable_count, clauses):
+              for values in itertools.product((False, True), repeat=variable_count):
+                  if all(
+                      any(values[abs(literal) - 1] == (literal > 0)
+                          for literal in clause)
+                      for clause in clauses
+                  ):
+                      return 'sat'
+              return 'unsat'
+
+          def parse_result(text):
+              lines = {line.strip() for line in text.splitlines()}
+              if 'SATISFIABLE' in lines:
+                  return 'sat'
+              if 'UNSATISFIABLE' in lines:
+                  return 'unsat'
+              if 'UNSOLVED' in lines:
+                  return 'unsolved'
+              return 'error'
+
+          rng = random.Random(20250830)
+          cases = [
+              (1, [[1]]),
+              (1, [[1], [-1]]),
+              (2, [[1, 2], [-1, 2], [1, -2], [-1, -2]]),
+              (4, [[1], [-1, 2], [-2, 3], [-3, 4]]),
+          ]
+          for _ in range(20):
+              variable_count = rng.randint(1, 8)
+              clauses = []
+              for _ in range(rng.randint(1, 24)):
+                  width = rng.randint(1, min(4, variable_count))
+                  variables = rng.sample(range(1, variable_count + 1), width)
+                  clauses.append([
+                      variable if rng.randrange(2) else -variable
+                      for variable in variables
+                  ])
+              cases.append((variable_count, clauses))
+
+          environment = os.environ.copy()
+          environment['UATU_TIMEOUT_SEC'] = '10'
+          environment['UATU_PRINT_MODEL'] = '1'
+          environment['ASAN_OPTIONS'] = 'detect_leaks=1:halt_on_error=1'
+          environment['UBSAN_OPTIONS'] = 'halt_on_error=1:print_stacktrace=1'
+
+          with tempfile.TemporaryDirectory() as temporary:
+              directory = Path(temporary)
+              for index, (variable_count, clauses) in enumerate(cases):
+                  path = directory / f'{index}.cnf'
+                  with path.open('w') as output:
+                      output.write(f'p cnf {variable_count} {len(clauses)}\n')
+                      for clause in clauses:
+                          output.write(' '.join(map(str, clause)) + ' 0\n')
+                  completed = subprocess.run(
+                      [solver, str(path)],
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      timeout=15,
+                      env=environment,
+                      check=False,
+                  )
+                  expected = brute_force(variable_count, clauses)
+                  actual = parse_result(completed.stdout)
+                  if actual != expected:
+                      raise SystemExit(
+                          f'sanitizer case {index}: expected {expected}, '
+                          f'got {actual}\n{completed.stdout[-4000:]}'
+                      )
+          print(f'sanitizer-validated {len(cases)} cases')
+          PY
+
+      - name: Restore strict release build and update evidence
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('evaluation/ver5_tiered_10_complete.json')
+          completion = json.loads(path.read_text())
+          completion['asan_ubsan'] = 'pass'
+          completion['sanitizer_cases'] = 24
+          path.write_text(json.dumps(completion, indent=2) + '\n')
+          PY
+
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add evaluation/ver5_tiered_10_complete.json
+          git commit -m 'eval: sanitizer-check controlled V3 tiered Ver5'
+          git pull --rebase origin temp/v3-tiered-evaluation
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+      - name: Publish sanitizer evidence to main
+        run: |
+          set -euo pipefail
+          git fetch origin main temp/v3-tiered-evaluation
+          git checkout -B main origin/main
+          git checkout origin/temp/v3-tiered-evaluation -- \
+              evaluation/ver5_tiered_10_complete.json
+          git add evaluation/ver5_tiered_10_complete.json
+          if git diff --cached --quiet; then
+              echo 'Main already contains sanitizer evidence.'
+          else
+              git commit -m 'eval: record sanitizer pass for V3 tiered Ver5'
+              git push origin HEAD:main
+          fi
