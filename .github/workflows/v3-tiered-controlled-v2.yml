@@ -1,0 +1,84 @@
+name: Reconstruct Controlled V3 Plus Tiered Clause Management V2
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-controlled-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-controlled-v2
+  cancel-in-progress: false
+
+jobs:
+  reconstruct-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install complete dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+          python3 -m pip install --quiet pyyaml
+          git fetch origin \
+              main \
+              temp/v3-chb-evaluation \
+              temp/v3-recursive-evaluation \
+              temp/ver5-vs-minisat-100
+
+      - name: Execute the controlled reconstruction specification
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          import yaml
+          from pathlib import Path
+
+          workflow = yaml.safe_load(
+              Path('.github/workflows/v3-tiered-controlled.yml').read_text()
+          )
+          steps = workflow['jobs']['reconstruct-and-validate']['steps']
+          selected_names = [
+              'Extract the V3 baseline and prior feature variants',
+              'Subtract CHB and recursive-minimization deltas from the combined donor',
+              'Verify controlled-delta properties',
+              'Build with strict warnings',
+              'Run deterministic SAT and UNSAT regression tests',
+              'Fetch prior fixed evaluation data',
+              'Validate on 10 SAT Competition 2025 benchmarks',
+              'Record controlled lineage and completion',
+              'Commit the controlled implementation and evidence',
+          ]
+          step_by_name = {
+              step.get('name'): step
+              for step in steps
+              if step.get('name')
+          }
+          for name in selected_names:
+              step = step_by_name.get(name)
+              if step is None or 'run' not in step:
+                  raise SystemExit(f'missing controlled step: {name}')
+              print(f'\n===== {name} =====', flush=True)
+              subprocess.run(['bash', '-lc', step['run']], check=True)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v3-tiered-controlled-validation-v2
+          path: |
+            evaluation/ver5_tiered_10_manifest.csv
+            evaluation/ver5_tiered_10_raw.csv
+            evaluation/ver5_tiered_10_report.md
+            evaluation/ver5_tiered_10_complete.json
+            evaluation/ver5_tiered_lineage.json
+          retention-days: 7
