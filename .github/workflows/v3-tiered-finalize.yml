@@ -1,0 +1,123 @@
+name: Finalize V3 Plus Tiered Clause Management
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-finalize.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-finalize
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Synchronize validated branch
+        run: |
+          set -euo pipefail
+          git pull --rebase origin temp/v3-tiered-evaluation
+
+      - name: Recheck source and validation records
+        run: |
+          set -euo pipefail
+          test -f cpu/ver_5/solver.cpp
+          test -f cpu/ver_5/solver.h
+          test -f cpu/ver_5/main.cpp
+          test -f evaluation/ver5_tiered_10_manifest.csv
+          test -f evaluation/ver5_tiered_10_raw.csv
+          test -f evaluation/ver5_tiered_10_report.md
+          grep -q 'Result: \*\*PASS\*\*' evaluation/ver5_tiered_10_report.md
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/recursive.cpp
+          make -C cpu/ver_5 clean all
+          make -C cpu/ver_5 test
+          python3 - <<'PY'
+          import csv
+          import hashlib
+          import json
+          from pathlib import Path
+
+          manifest = list(csv.DictReader(
+              Path('evaluation/ver5_tiered_10_manifest.csv').open(newline='')
+          ))
+          rows = list(csv.DictReader(
+              Path('evaluation/ver5_tiered_10_raw.csv').open(newline='')
+          ))
+          if len(manifest) != 10:
+              raise SystemExit(f'expected 10 manifest rows, found {len(manifest)}')
+          if len(rows) != 20:
+              raise SystemExit(f'expected 20 solver rows, found {len(rows)}')
+          if any(row['correct'] != '1' for row in rows):
+              raise SystemExit('at least one benchmark result is not correct')
+          if sum(row['expected'] == 'sat' for row in manifest) != 5:
+              raise SystemExit('manifest is not 5 SAT and 5 UNSAT')
+          if sum(row['expected'] == 'unsat' for row in manifest) != 5:
+              raise SystemExit('manifest is not 5 SAT and 5 UNSAT')
+
+          source_files = [
+              Path('cpu/ver_5/solver.h'),
+              Path('cpu/ver_5/solver.cpp'),
+              Path('cpu/ver_5/main.cpp'),
+              Path('cpu/ver_5/Makefile'),
+          ]
+          digests = {
+              str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in source_files
+          }
+          summary = {
+              'variant': 'V3 + Tiered Clause Management',
+              'chb_enabled': False,
+              'recursive_minimization_enabled': False,
+              'tiered_clause_management_enabled': True,
+              'sat_competition_2025_instances': 10,
+              'sat_instances': 5,
+              'unsat_instances': 5,
+              'ver5_correct': sum(
+                  row['solver'] == 'ver5-tiered' and row['correct'] == '1'
+                  for row in rows
+              ),
+              'minisat_correct': sum(
+                  row['solver'] == 'minisat' and row['correct'] == '1'
+                  for row in rows
+              ),
+              'strict_build': 'pass',
+              'deterministic_tests': 'pass',
+              'source_sha256': digests,
+          }
+          Path('evaluation/ver5_tiered_10_complete.json').write_text(
+              json.dumps(summary, indent=2) + '\n'
+          )
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Publish completion record
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add evaluation/ver5_tiered_10_complete.json
+          if git diff --cached --quiet; then
+              echo 'Completion record is already current.'
+          else
+              git commit -m 'eval: finalize V3 tiered Ver5 validation'
+              git pull --rebase origin temp/v3-tiered-evaluation
+              git push origin HEAD:temp/v3-tiered-evaluation
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v3-tiered-completion
+          path: evaluation/ver5_tiered_10_complete.json
+          retention-days: 7
