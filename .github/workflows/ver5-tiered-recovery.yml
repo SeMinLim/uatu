@@ -1,0 +1,154 @@
+name: Recover Uatu Ver5 Tiered Validation
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/ver5-tiered-recovery.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: uatu-ver5-tiered-recovery
+  cancel-in-progress: true
+
+jobs:
+  replacement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BENCHMARK_ID: 29
+      EXPECTED: unsat
+      BENCHMARK_HASH: 965bc4f6691b2e5f7388aaa9ba68f768
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/v3-tiered-evaluation
+
+      - name: Install dependencies and build Ver5
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y xz-utils
+          make -C cpu/ver_5 clean all CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Download SAT Competition 2025 benchmark
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          url="https://benchmark-database.de/file/${BENCHMARK_HASH}?context=cnf"
+          curl -fL --retry 8 --retry-delay 5 "$url" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run and validate replacement benchmark
+        run: |
+          set -euo pipefail
+          set +e
+          /usr/bin/time -q -f '%e,%U,%S,%M' -o work/timing.csv \
+              timeout --signal=TERM --kill-after=5s 310s \
+              env UATU_TIMEOUT_SEC=300 UATU_PRINT_MODEL=1 \
+              cpu/ver_5/obj/uatu_solver work/instance.cnf \
+              > work/uatu.out 2>&1
+          rc=$?
+          set -e
+
+          actual=unknown
+          if grep -qx 'UNSATISFIABLE' work/uatu.out; then
+              actual=unsat
+          elif grep -qx 'SATISFIABLE' work/uatu.out; then
+              actual=sat
+          fi
+          if [[ "$actual" != "$EXPECTED" ]]; then
+              cat work/uatu.out
+              printf 'Expected %s but received %s with exit code %s\n' "$EXPECTED" "$actual" "$rc"
+              exit 1
+          fi
+
+          model_valid=1
+          IFS=',' read -r wall user sys rss < work/timing.csv
+          stat_value() {
+              local label="$1"
+              grep -F "$label" work/uatu.out | tail -n 1 | \
+                  awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}'
+          }
+          core=$(stat_value 'Core Clauses')
+          tier2=$(stat_value 'Tier2 Clauses')
+          local_count=$(stat_value 'Local Clauses')
+          reductions=$(stat_value 'Clause Reductions')
+          deleted=$(stat_value 'Deleted Clauses')
+          core_promotions=$(stat_value 'Core Promotions')
+          tier2_promotions=$(stat_value 'Tier2 Promotions')
+          tier2_demotions=$(stat_value 'Tier2 Demotions')
+
+          printf 'id,expected,result,correct,model_valid,wall_sec,user_sec,sys_sec,rss_kb,exit_code,hash,core,tier2,local,reductions,deleted,core_promotions,tier2_promotions,tier2_demotions\n' > result/result.csv
+          printf '%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+              "$BENCHMARK_ID" "$EXPECTED" "$actual" "$model_valid" \
+              "$wall" "$user" "$sys" "$rss" "$rc" "$BENCHMARK_HASH" \
+              "$core" "$tier2" "$local_count" "$reductions" "$deleted" \
+              "$core_promotions" "$tier2_promotions" "$tier2_demotions" \
+              >> result/result.csv
+          cat result/result.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiered-smoke-29
+          path: result/result.csv
+          retention-days: 7
+
+  finalize:
+    needs: replacement
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/v3-tiered-evaluation
+          fetch-depth: 0
+
+      - name: Download nine validated results from the original run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tiered-smoke-*
+          path: downloaded
+          merge-multiple: false
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 33304151892
+
+      - name: Download replacement result
+        uses: actions/download-artifact@v4
+        with:
+          name: tiered-smoke-29
+          path: downloaded/tiered-smoke-29
+
+      - name: Aggregate validation results
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/aggregate_ver5_tiered.py
+
+      - name: Publish verified implementation
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/ver5-tiered-validation-v2.yml
+          rm -f .github/workflows/ver5-tiered-recovery.yml
+          rm -f .github/scripts/prepare_ver5_tiered.py
+          rm -f .github/scripts/validate_ver5_tiered.py
+          rm -f .github/scripts/aggregate_ver5_tiered.py
+          rm -f .github/scripts/verify_sat_model.py
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add -A README.md cpu/ver_5 evaluation \
+              .github/workflows .github/scripts
+          git commit -m 'validate ver_5 tiered clause management on SAT 2025'
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-tiered-validation-results
+          path: |
+            evaluation/ver5_tiered_smoke10.csv
+            evaluation/ver5_tiered_smoke10.md
+          retention-days: 7
