@@ -1,4 +1,6 @@
 #include "solver.h"
+#include "recursive.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cerrno>
@@ -491,36 +493,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
         learnt[0] = -resolveLiteral;
 
-        // Non-recursive, one-step reason minimization.
-        if ( learnt.size() > 1 ) {
-                ++time_stamp;
-                const int membershipStamp = time_stamp;
-                for ( int literal : learnt ) mark[abs(literal)] = membershipStamp;
-
-                int out = 1;
-                for ( int i = 1; i < static_cast<int>(learnt.size()); i ++ ) {
-                        const int literal = learnt[i];
-                        const int variable = abs(literal);
-                        const int reasonClause = reason[variable];
-                        bool removable = reasonClause >= 0;
-
-                        if ( removable ) {
-                                const Clause &reasonData = clauseDB[reasonClause];
-                                for ( int q : reasonData.literals ) {
-                                        const int qvar = abs(q);
-                                        if ( qvar == variable || level[qvar] == 0 ) continue;
-                                        if ( mark[qvar] != membershipStamp ) {
-                                                removable = false;
-                                                break;
-                                        }
-                                }
-                        }
-
-                        if ( removable ) ++minimizedLiterals;
-                        else learnt[out++] = literal;
-                }
-                learnt.resize(out);
-        }
+        // Recursive reason-graph minimization.
+        minimizeLearnedClauseRecursive(*this);
 
         ++time_stamp;
         lbd = 0;
