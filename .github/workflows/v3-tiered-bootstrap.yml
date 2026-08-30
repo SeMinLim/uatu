@@ -1,0 +1,1826 @@
+name: Build and Validate V3 Plus Tiered Clause Management
+
+on:
+  push:
+    branches:
+      - temp/v3-tiered-evaluation
+    paths:
+      - .github/workflows/v3-tiered-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: uatu-v3-tiered-evaluation
+  cancel-in-progress: true
+
+jobs:
+  implement-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install validation dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y minisat xz-utils
+
+      - name: Reset Ver5 to V3 and add tiered clause management
+        run: |
+          set -euo pipefail
+          rm -rf cpu/ver_5
+          cp -a cpu/ver_3 cpu/ver_5
+          rm -f cpu/ver_5/chb.cpp cpu/ver_5/chb.h \
+                cpu/ver_5/recursive.cpp cpu/ver_5/recursive.h
+          mkdir -p cpu/ver_5/tests evaluation
+
+          cat > cpu/ver_5/solver.h <<'EOF'
+          #ifndef UATU_VER5_SOLVER_H
+          #define UATU_VER5_SOLVER_H
+
+          #include <chrono>
+          #include <cstdint>
+          #include <queue>
+          #include <vector>
+
+          enum class SolveResult : std::uint8_t {
+              SATISFIABLE,
+              UNSATISFIABLE,
+              UNSOLVED,
+          };
+
+          enum class ClauseTier : std::uint8_t {
+              ORIGINAL,
+              CORE,
+              TIER2,
+              LOCAL,
+          };
+
+          struct SolverStats {
+              std::uint64_t decisions = 0;
+              std::uint64_t propagations = 0;
+              std::uint64_t conflicts = 0;
+              std::uint64_t restarts = 0;
+              std::uint64_t reductions = 0;
+              std::uint64_t learned_core = 0;
+              std::uint64_t learned_tier2 = 0;
+              std::uint64_t learned_local = 0;
+              std::uint64_t tier_promotions = 0;
+              std::uint64_t tier2_demotions = 0;
+              std::uint64_t deleted_local = 0;
+          };
+
+          class Solver {
+          public:
+              Solver();
+
+              bool reserve_variables(int variable_count);
+              bool add_clause(const std::vector<int>& literals);
+              SolveResult solve(double timeout_seconds);
+
+              int variable_count() const;
+              const std::vector<std::int8_t>& assignment() const;
+              const SolverStats& stats() const;
+
+              static ClauseTier classify_lbd(std::uint32_t lbd);
+
+          private:
+              struct Clause {
+                  std::vector<int> literals;
+                  int watch_a = 0;
+                  int watch_b = 0;
+                  bool learned = false;
+                  bool deleted = false;
+                  ClauseTier tier = ClauseTier::ORIGINAL;
+                  std::uint32_t lbd = 0;
+                  double activity = 0.0;
+                  std::uint64_t touched_at = 0;
+              };
+
+              struct HeapEntry {
+                  double activity = 0.0;
+                  int variable = -1;
+                  std::uint64_t stamp = 0;
+              };
+
+              struct HeapEntryLess {
+                  bool operator()(const HeapEntry& lhs,
+                                  const HeapEntry& rhs) const;
+              };
+
+              static constexpr int NO_REASON = -1;
+              static constexpr int NO_CONFLICT = -1;
+              static constexpr int TIMEOUT_CONFLICT = -2;
+
+              bool ensure_variables(int variable_count);
+              int add_clause_internal(std::vector<int> literals,
+                                      bool learned,
+                                      std::uint32_t lbd);
+              void attach_clause(int clause_id);
+
+              static int literal_variable(int literal);
+              static int literal_index(int literal);
+              int literal_value(int literal) const;
+
+              bool enqueue(int literal, int reason_clause);
+              void new_decision_level();
+              int decision_level() const;
+              void cancel_until(int target_level);
+
+              int propagate();
+              bool analyze_conflict(int conflict_clause,
+                                    std::vector<int>& learned_clause,
+                                    int& backtrack_level,
+                                    std::uint32_t& lbd);
+
+              int pick_branch_literal();
+              void push_variable(int variable);
+              void bump_variable(int variable);
+              void decay_variable_activity();
+              void rebuild_variable_heap();
+
+              void bump_clause(int clause_id);
+              void decay_clause_activity();
+              void touch_learned_clause(int clause_id);
+              std::uint32_t calculate_lbd(const std::vector<int>& literals);
+              void reduce_clause_database();
+
+              bool timeout_reached();
+
+              bool ok_ = true;
+              int variable_count_ = 0;
+
+              std::vector<Clause> clauses_;
+              std::vector<std::vector<int>> watches_;
+
+              std::vector<std::int8_t> assignment_;
+              std::vector<std::int8_t> saved_phase_;
+              std::vector<int> level_;
+              std::vector<int> reason_;
+              std::vector<std::uint8_t> seen_;
+
+              std::vector<int> trail_;
+              std::vector<int> trail_limits_;
+              std::size_t propagation_head_ = 0;
+
+              std::vector<double> variable_activity_;
+              std::vector<std::uint64_t> heap_stamp_;
+              std::priority_queue<HeapEntry,
+                                  std::vector<HeapEntry>,
+                                  HeapEntryLess> variable_heap_;
+
+              std::vector<std::uint32_t> level_marks_;
+              std::uint32_t level_mark_epoch_ = 1;
+
+              double variable_increment_ = 1.0;
+              double variable_decay_ = 0.95;
+              double clause_increment_ = 1.0;
+              double clause_decay_ = 0.999;
+
+              std::uint64_t conflicts_since_restart_ = 0;
+              std::uint64_t restart_limit_ = 100;
+              std::uint64_t next_reduce_conflict_ = 2000;
+              std::uint64_t reduce_interval_ = 2000;
+              std::uint64_t timeout_probe_counter_ = 0;
+
+              double timeout_seconds_ = 0.0;
+              std::chrono::steady_clock::time_point deadline_;
+              SolverStats stats_;
+          };
+
+          #endif
+          EOF
+
+          cat > cpu/ver_5/solver.cpp <<'EOF'
+          #include "solver.h"
+
+          #include <algorithm>
+          #include <cmath>
+          #include <cstdlib>
+          #include <limits>
+          #include <utility>
+
+          namespace {
+
+          int tier_rank(ClauseTier tier)
+          {
+              if (tier == ClauseTier::CORE) {
+                  return 0;
+              }
+              if (tier == ClauseTier::TIER2) {
+                  return 1;
+              }
+              if (tier == ClauseTier::LOCAL) {
+                  return 2;
+              }
+              return -1;
+          }
+
+          }
+
+          bool Solver::HeapEntryLess::operator()(const HeapEntry& lhs,
+                                                  const HeapEntry& rhs) const
+          {
+              if (lhs.activity != rhs.activity) {
+                  return lhs.activity < rhs.activity;
+              }
+              return lhs.variable > rhs.variable;
+          }
+
+          Solver::Solver() = default;
+
+          ClauseTier Solver::classify_lbd(std::uint32_t lbd)
+          {
+              if (lbd <= 2) {
+                  return ClauseTier::CORE;
+              }
+              if (lbd <= 6) {
+                  return ClauseTier::TIER2;
+              }
+              return ClauseTier::LOCAL;
+          }
+
+          int Solver::literal_variable(int literal)
+          {
+              return std::abs(literal) - 1;
+          }
+
+          int Solver::literal_index(int literal)
+          {
+              int variable = literal_variable(literal);
+              return variable * 2 + (literal < 0 ? 1 : 0);
+          }
+
+          bool Solver::reserve_variables(int variable_count)
+          {
+              if (variable_count < 0) {
+                  return false;
+              }
+              return ensure_variables(variable_count);
+          }
+
+          bool Solver::ensure_variables(int variable_count)
+          {
+              if (variable_count <= variable_count_) {
+                  return true;
+              }
+
+              int old_count = variable_count_;
+              variable_count_ = variable_count;
+
+              assignment_.resize(variable_count_, 0);
+              saved_phase_.resize(variable_count_, 1);
+              level_.resize(variable_count_, 0);
+              reason_.resize(variable_count_, NO_REASON);
+              seen_.resize(variable_count_, 0);
+              variable_activity_.resize(variable_count_, 0.0);
+              heap_stamp_.resize(variable_count_, 1);
+              watches_.resize(static_cast<std::size_t>(variable_count_) * 2);
+
+              for (int variable = old_count; variable < variable_count_; ++variable) {
+                  push_variable(variable);
+              }
+              return true;
+          }
+
+          int Solver::literal_value(int literal) const
+          {
+              int variable = literal_variable(literal);
+              std::int8_t value = assignment_[variable];
+              if (value == 0) {
+                  return 0;
+              }
+              if (literal > 0) {
+                  return value;
+              }
+              return -value;
+          }
+
+          bool Solver::add_clause(const std::vector<int>& input_literals)
+          {
+              if (!ok_) {
+                  return false;
+              }
+
+              std::vector<int> literals;
+              literals.reserve(input_literals.size());
+              int maximum_variable = 0;
+              for (int literal : input_literals) {
+                  if (literal == 0) {
+                      continue;
+                  }
+                  maximum_variable = std::max(maximum_variable, std::abs(literal));
+                  literals.push_back(literal);
+              }
+              if (!ensure_variables(maximum_variable)) {
+                  return false;
+              }
+
+              std::sort(literals.begin(), literals.end(),
+                        [](int lhs, int rhs) {
+                            int lhs_variable = std::abs(lhs);
+                            int rhs_variable = std::abs(rhs);
+                            if (lhs_variable != rhs_variable) {
+                                return lhs_variable < rhs_variable;
+                            }
+                            return lhs < rhs;
+                        });
+
+              std::vector<int> normalized;
+              normalized.reserve(literals.size());
+              for (int literal : literals) {
+                  if (!normalized.empty()
+                      && std::abs(normalized.back()) == std::abs(literal)) {
+                      if (normalized.back() == literal) {
+                          continue;
+                      }
+                      return true;
+                  }
+                  normalized.push_back(literal);
+              }
+
+              int clause_id = add_clause_internal(std::move(normalized), false, 0);
+              if (clause_id < 0) {
+                  ok_ = false;
+                  return false;
+              }
+
+              Clause& clause = clauses_[clause_id];
+              if (clause.literals.empty()) {
+                  ok_ = false;
+                  return false;
+              }
+              if (clause.literals.size() == 1) {
+                  if (!enqueue(clause.literals[0], clause_id)) {
+                      ok_ = false;
+                      return false;
+                  }
+              } else {
+                  attach_clause(clause_id);
+              }
+              return true;
+          }
+
+          int Solver::add_clause_internal(std::vector<int> literals,
+                                          bool learned,
+                                          std::uint32_t lbd)
+          {
+              Clause clause;
+              clause.literals = std::move(literals);
+              clause.watch_a = 0;
+              clause.watch_b = clause.literals.size() > 1 ? 1 : 0;
+              clause.learned = learned;
+              clause.deleted = false;
+              clause.lbd = learned ? std::max<std::uint32_t>(1, lbd) : 0;
+              clause.tier = learned ? classify_lbd(clause.lbd)
+                                    : ClauseTier::ORIGINAL;
+              clause.activity = 0.0;
+              clause.touched_at = stats_.conflicts;
+
+              clauses_.push_back(std::move(clause));
+              int clause_id = static_cast<int>(clauses_.size()) - 1;
+
+              if (learned) {
+                  ClauseTier tier = clauses_[clause_id].tier;
+                  if (tier == ClauseTier::CORE) {
+                      ++stats_.learned_core;
+                  } else if (tier == ClauseTier::TIER2) {
+                      ++stats_.learned_tier2;
+                  } else {
+                      ++stats_.learned_local;
+                  }
+              }
+              return clause_id;
+          }
+
+          void Solver::attach_clause(int clause_id)
+          {
+              Clause& clause = clauses_[clause_id];
+              if (clause.literals.size() < 2) {
+                  return;
+              }
+              watches_[literal_index(clause.literals[clause.watch_a])].push_back(clause_id);
+              watches_[literal_index(clause.literals[clause.watch_b])].push_back(clause_id);
+          }
+
+          bool Solver::enqueue(int literal, int reason_clause)
+          {
+              int value = literal_value(literal);
+              if (value != 0) {
+                  return value > 0;
+              }
+
+              int variable = literal_variable(literal);
+              assignment_[variable] = literal > 0 ? 1 : -1;
+              saved_phase_[variable] = assignment_[variable];
+              level_[variable] = decision_level();
+              reason_[variable] = reason_clause;
+              trail_.push_back(literal);
+              return true;
+          }
+
+          void Solver::new_decision_level()
+          {
+              trail_limits_.push_back(static_cast<int>(trail_.size()));
+          }
+
+          int Solver::decision_level() const
+          {
+              return static_cast<int>(trail_limits_.size());
+          }
+
+          void Solver::cancel_until(int target_level)
+          {
+              if (decision_level() <= target_level) {
+                  return;
+              }
+
+              int target_trail = trail_limits_[target_level];
+              for (int index = static_cast<int>(trail_.size()) - 1;
+                   index >= target_trail;
+                   --index) {
+                  int variable = literal_variable(trail_[index]);
+                  assignment_[variable] = 0;
+                  level_[variable] = 0;
+                  reason_[variable] = NO_REASON;
+                  push_variable(variable);
+              }
+
+              trail_.resize(target_trail);
+              trail_limits_.resize(target_level);
+              if (propagation_head_ > trail_.size()) {
+                  propagation_head_ = trail_.size();
+              }
+          }
+
+          bool Solver::timeout_reached()
+          {
+              if (timeout_seconds_ <= 0.0) {
+                  return false;
+              }
+              ++timeout_probe_counter_;
+              if ((timeout_probe_counter_ & 4095U) != 0U) {
+                  return false;
+              }
+              return std::chrono::steady_clock::now() >= deadline_;
+          }
+
+          int Solver::propagate()
+          {
+              while (propagation_head_ < trail_.size()) {
+                  if (timeout_reached()) {
+                      return TIMEOUT_CONFLICT;
+                  }
+
+                  int propagated_literal = trail_[propagation_head_++];
+                  int false_literal = -propagated_literal;
+                  std::vector<int>& watch_list = watches_[literal_index(false_literal)];
+                  std::size_t output_index = 0;
+
+                  for (std::size_t input_index = 0;
+                       input_index < watch_list.size();
+                       ++input_index) {
+                      int clause_id = watch_list[input_index];
+                      Clause& clause = clauses_[clause_id];
+                      if (clause.deleted) {
+                          continue;
+                      }
+
+                      int false_watch = -1;
+                      if (clause.literals[clause.watch_a] == false_literal) {
+                          false_watch = clause.watch_a;
+                      } else if (clause.literals[clause.watch_b] == false_literal) {
+                          false_watch = clause.watch_b;
+                      }
+
+                      if (false_watch < 0) {
+                          watch_list[output_index++] = clause_id;
+                          continue;
+                      }
+
+                      int other_watch = false_watch == clause.watch_a
+                                      ? clause.watch_b
+                                      : clause.watch_a;
+                      int other_literal = clause.literals[other_watch];
+                      if (literal_value(other_literal) > 0) {
+                          watch_list[output_index++] = clause_id;
+                          continue;
+                      }
+
+                      bool moved_watch = false;
+                      for (int position = 0;
+                           position < static_cast<int>(clause.literals.size());
+                           ++position) {
+                          if (position == clause.watch_a || position == clause.watch_b) {
+                              continue;
+                          }
+                          int candidate_literal = clause.literals[position];
+                          if (literal_value(candidate_literal) < 0) {
+                              continue;
+                          }
+
+                          if (false_watch == clause.watch_a) {
+                              clause.watch_a = position;
+                          } else {
+                              clause.watch_b = position;
+                          }
+                          watches_[literal_index(candidate_literal)].push_back(clause_id);
+                          moved_watch = true;
+                          break;
+                      }
+
+                      if (moved_watch) {
+                          continue;
+                      }
+
+                      watch_list[output_index++] = clause_id;
+                      int other_value = literal_value(other_literal);
+                      if (other_value < 0 || !enqueue(other_literal, clause_id)) {
+                          for (std::size_t remaining = input_index + 1;
+                               remaining < watch_list.size();
+                               ++remaining) {
+                              watch_list[output_index++] = watch_list[remaining];
+                          }
+                          watch_list.resize(output_index);
+                          touch_learned_clause(clause_id);
+                          return clause_id;
+                      }
+
+                      ++stats_.propagations;
+                      touch_learned_clause(clause_id);
+                  }
+
+                  watch_list.resize(output_index);
+              }
+              return NO_CONFLICT;
+          }
+
+          void Solver::push_variable(int variable)
+          {
+              HeapEntry entry;
+              entry.activity = variable_activity_[variable];
+              entry.variable = variable;
+              entry.stamp = heap_stamp_[variable];
+              variable_heap_.push(entry);
+          }
+
+          void Solver::bump_variable(int variable)
+          {
+              variable_activity_[variable] += variable_increment_;
+              ++heap_stamp_[variable];
+
+              if (variable_activity_[variable] > 1.0e100) {
+                  for (double& activity : variable_activity_) {
+                      activity *= 1.0e-100;
+                  }
+                  variable_increment_ *= 1.0e-100;
+                  rebuild_variable_heap();
+                  return;
+              }
+              push_variable(variable);
+          }
+
+          void Solver::decay_variable_activity()
+          {
+              variable_increment_ /= variable_decay_;
+          }
+
+          void Solver::rebuild_variable_heap()
+          {
+              variable_heap_ = decltype(variable_heap_)();
+              for (int variable = 0; variable < variable_count_; ++variable) {
+                  ++heap_stamp_[variable];
+                  if (assignment_[variable] == 0) {
+                      push_variable(variable);
+                  }
+              }
+          }
+
+          int Solver::pick_branch_literal()
+          {
+              while (!variable_heap_.empty()) {
+                  HeapEntry entry = variable_heap_.top();
+                  variable_heap_.pop();
+                  if (entry.variable < 0 || entry.variable >= variable_count_) {
+                      continue;
+                  }
+                  if (assignment_[entry.variable] != 0) {
+                      continue;
+                  }
+                  if (entry.stamp != heap_stamp_[entry.variable]) {
+                      continue;
+                  }
+
+                  int literal = entry.variable + 1;
+                  return saved_phase_[entry.variable] < 0 ? -literal : literal;
+              }
+
+              for (int variable = 0; variable < variable_count_; ++variable) {
+                  if (assignment_[variable] == 0) {
+                      int literal = variable + 1;
+                      return saved_phase_[variable] < 0 ? -literal : literal;
+                  }
+              }
+              return 0;
+          }
+
+          void Solver::bump_clause(int clause_id)
+          {
+              Clause& clause = clauses_[clause_id];
+              if (!clause.learned || clause.deleted) {
+                  return;
+              }
+
+              clause.activity += clause_increment_;
+              if (clause.activity <= 1.0e100) {
+                  return;
+              }
+
+              for (Clause& candidate : clauses_) {
+                  if (candidate.learned && !candidate.deleted) {
+                      candidate.activity *= 1.0e-100;
+                  }
+              }
+              clause_increment_ *= 1.0e-100;
+          }
+
+          void Solver::decay_clause_activity()
+          {
+              clause_increment_ /= clause_decay_;
+          }
+
+          std::uint32_t Solver::calculate_lbd(const std::vector<int>& literals)
+          {
+              int maximum_level = decision_level();
+              if (static_cast<int>(level_marks_.size()) <= maximum_level) {
+                  level_marks_.resize(maximum_level + 1, 0);
+              }
+
+              ++level_mark_epoch_;
+              if (level_mark_epoch_ == 0) {
+                  std::fill(level_marks_.begin(), level_marks_.end(), 0);
+                  level_mark_epoch_ = 1;
+              }
+
+              std::uint32_t lbd = 0;
+              for (int literal : literals) {
+                  int current_level = level_[literal_variable(literal)];
+                  if (current_level >= static_cast<int>(level_marks_.size())) {
+                      level_marks_.resize(current_level + 1, 0);
+                  }
+                  if (level_marks_[current_level] == level_mark_epoch_) {
+                      continue;
+                  }
+                  level_marks_[current_level] = level_mark_epoch_;
+                  ++lbd;
+              }
+              return std::max<std::uint32_t>(1, lbd);
+          }
+
+          void Solver::touch_learned_clause(int clause_id)
+          {
+              Clause& clause = clauses_[clause_id];
+              if (!clause.learned || clause.deleted) {
+                  return;
+              }
+
+              clause.touched_at = stats_.conflicts;
+              bump_clause(clause_id);
+
+              std::uint32_t current_lbd = calculate_lbd(clause.literals);
+              if (current_lbd >= clause.lbd) {
+                  return;
+              }
+
+              ClauseTier old_tier = clause.tier;
+              ClauseTier new_tier = classify_lbd(current_lbd);
+              clause.lbd = current_lbd;
+              if (tier_rank(new_tier) < tier_rank(old_tier)) {
+                  clause.tier = new_tier;
+                  ++stats_.tier_promotions;
+              }
+          }
+
+          bool Solver::analyze_conflict(int conflict_clause,
+                                        std::vector<int>& learned_clause,
+                                        int& backtrack_level,
+                                        std::uint32_t& lbd)
+          {
+              learned_clause.clear();
+              learned_clause.push_back(0);
+
+              int path_count = 0;
+              int resolved_literal = 0;
+              int trail_index = static_cast<int>(trail_.size()) - 1;
+              int clause_id = conflict_clause;
+
+              do {
+                  if (clause_id < 0 || clause_id >= static_cast<int>(clauses_.size())) {
+                      return false;
+                  }
+
+                  Clause& clause = clauses_[clause_id];
+                  touch_learned_clause(clause_id);
+
+                  for (int literal : clause.literals) {
+                      int variable = literal_variable(literal);
+                      if (resolved_literal != 0
+                          && variable == literal_variable(resolved_literal)) {
+                          continue;
+                      }
+                      if (seen_[variable] != 0 || level_[variable] == 0) {
+                          continue;
+                      }
+
+                      seen_[variable] = 1;
+                      bump_variable(variable);
+                      if (level_[variable] == decision_level()) {
+                          ++path_count;
+                      } else {
+                          learned_clause.push_back(literal);
+                      }
+                  }
+
+                  while (trail_index >= 0
+                         && seen_[literal_variable(trail_[trail_index])] == 0) {
+                      --trail_index;
+                  }
+                  if (trail_index < 0) {
+                      return false;
+                  }
+
+                  resolved_literal = trail_[trail_index--];
+                  int resolved_variable = literal_variable(resolved_literal);
+                  seen_[resolved_variable] = 0;
+                  --path_count;
+                  clause_id = reason_[resolved_variable];
+              } while (path_count > 0);
+
+              learned_clause[0] = -resolved_literal;
+
+              backtrack_level = 0;
+              if (learned_clause.size() > 1) {
+                  std::size_t highest_position = 1;
+                  for (std::size_t position = 2;
+                       position < learned_clause.size();
+                       ++position) {
+                      int current_level = level_[literal_variable(learned_clause[position])];
+                      int highest_level = level_[literal_variable(
+                          learned_clause[highest_position])];
+                      if (current_level > highest_level) {
+                          highest_position = position;
+                      }
+                  }
+                  std::swap(learned_clause[1], learned_clause[highest_position]);
+                  backtrack_level = level_[literal_variable(learned_clause[1])];
+              }
+
+              lbd = calculate_lbd(learned_clause);
+              for (std::size_t position = 1;
+                   position < learned_clause.size();
+                   ++position) {
+                  seen_[literal_variable(learned_clause[position])] = 0;
+              }
+              return true;
+          }
+
+          void Solver::reduce_clause_database()
+          {
+              ++stats_.reductions;
+
+              std::vector<std::uint8_t> locked(clauses_.size(), 0);
+              for (int variable = 0; variable < variable_count_; ++variable) {
+                  int reason_clause = reason_[variable];
+                  if (reason_clause >= 0
+                      && reason_clause < static_cast<int>(locked.size())) {
+                      locked[reason_clause] = 1;
+                  }
+              }
+
+              const std::uint64_t tier2_stale_window = 30000;
+              std::vector<int> local_candidates;
+              for (int clause_id = 0;
+                   clause_id < static_cast<int>(clauses_.size());
+                   ++clause_id) {
+                  Clause& clause = clauses_[clause_id];
+                  if (!clause.learned || clause.deleted) {
+                      continue;
+                  }
+
+                  if (clause.tier == ClauseTier::TIER2
+                      && locked[clause_id] == 0
+                      && stats_.conflicts > clause.touched_at + tier2_stale_window) {
+                      clause.tier = ClauseTier::LOCAL;
+                      ++stats_.tier2_demotions;
+                  }
+
+                  if (clause.tier != ClauseTier::LOCAL) {
+                      continue;
+                  }
+                  if (locked[clause_id] != 0 || clause.literals.size() <= 2) {
+                      continue;
+                  }
+                  local_candidates.push_back(clause_id);
+              }
+
+              std::sort(local_candidates.begin(), local_candidates.end(),
+                        [this](int lhs_id, int rhs_id) {
+                            const Clause& lhs = clauses_[lhs_id];
+                            const Clause& rhs = clauses_[rhs_id];
+                            if (lhs.lbd != rhs.lbd) {
+                                return lhs.lbd > rhs.lbd;
+                            }
+                            if (lhs.activity != rhs.activity) {
+                                return lhs.activity < rhs.activity;
+                            }
+                            if (lhs.touched_at != rhs.touched_at) {
+                                return lhs.touched_at < rhs.touched_at;
+                            }
+                            return lhs.literals.size() > rhs.literals.size();
+                        });
+
+              std::size_t delete_count = local_candidates.size() / 2;
+              for (std::size_t index = 0; index < delete_count; ++index) {
+                  Clause& clause = clauses_[local_candidates[index]];
+                  clause.deleted = true;
+                  std::vector<int>().swap(clause.literals);
+                  ++stats_.deleted_local;
+              }
+
+              if (variable_heap_.size()
+                  > static_cast<std::size_t>(std::max(1, variable_count_)) * 8) {
+                  rebuild_variable_heap();
+              }
+          }
+
+          SolveResult Solver::solve(double timeout_seconds)
+          {
+              if (!ok_) {
+                  return SolveResult::UNSATISFIABLE;
+              }
+
+              timeout_seconds_ = timeout_seconds;
+              timeout_probe_counter_ = 0;
+              if (timeout_seconds_ > 0.0) {
+                  deadline_ = std::chrono::steady_clock::now()
+                            + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                  std::chrono::duration<double>(timeout_seconds_));
+              }
+
+              int conflict_clause = propagate();
+              if (conflict_clause == TIMEOUT_CONFLICT) {
+                  return SolveResult::UNSOLVED;
+              }
+              if (conflict_clause != NO_CONFLICT) {
+                  return SolveResult::UNSATISFIABLE;
+              }
+
+              std::vector<int> learned_clause;
+              while (true) {
+                  if (timeout_reached()) {
+                      return SolveResult::UNSOLVED;
+                  }
+
+                  conflict_clause = propagate();
+                  if (conflict_clause == TIMEOUT_CONFLICT) {
+                      return SolveResult::UNSOLVED;
+                  }
+
+                  if (conflict_clause != NO_CONFLICT) {
+                      ++stats_.conflicts;
+                      ++conflicts_since_restart_;
+
+                      if (decision_level() == 0) {
+                          return SolveResult::UNSATISFIABLE;
+                      }
+
+                      int backtrack_level = 0;
+                      std::uint32_t lbd = 0;
+                      if (!analyze_conflict(conflict_clause,
+                                            learned_clause,
+                                            backtrack_level,
+                                            lbd)) {
+                          return SolveResult::UNSOLVED;
+                      }
+
+                      cancel_until(backtrack_level);
+                      int learned_id = add_clause_internal(learned_clause, true, lbd);
+                      Clause& learned = clauses_[learned_id];
+                      if (learned.literals.size() > 1) {
+                          attach_clause(learned_id);
+                      }
+                      if (!enqueue(learned.literals[0], learned_id)) {
+                          return SolveResult::UNSATISFIABLE;
+                      }
+
+                      decay_variable_activity();
+                      decay_clause_activity();
+
+                      if (stats_.conflicts >= next_reduce_conflict_) {
+                          reduce_clause_database();
+                          reduce_interval_ += 500;
+                          next_reduce_conflict_ = stats_.conflicts + reduce_interval_;
+                      }
+
+                      if (conflicts_since_restart_ >= restart_limit_) {
+                          cancel_until(0);
+                          conflicts_since_restart_ = 0;
+                          restart_limit_ = std::min<std::uint64_t>(
+                              100000,
+                              restart_limit_ + restart_limit_ / 2);
+                          ++stats_.restarts;
+                      }
+                      continue;
+                  }
+
+                  int decision_literal = pick_branch_literal();
+                  if (decision_literal == 0) {
+                      return SolveResult::SATISFIABLE;
+                  }
+
+                  ++stats_.decisions;
+                  new_decision_level();
+                  if (!enqueue(decision_literal, NO_REASON)) {
+                      return SolveResult::UNSOLVED;
+                  }
+              }
+          }
+
+          int Solver::variable_count() const
+          {
+              return variable_count_;
+          }
+
+          const std::vector<std::int8_t>& Solver::assignment() const
+          {
+              return assignment_;
+          }
+
+          const SolverStats& Solver::stats() const
+          {
+              return stats_;
+          }
+          EOF
+
+          cat > cpu/ver_5/main.cpp <<'EOF'
+          #include "solver.h"
+
+          #include <cerrno>
+          #include <cctype>
+          #include <cstdio>
+          #include <cstdlib>
+          #include <cstring>
+          #include <exception>
+          #include <iostream>
+          #include <new>
+          #include <string>
+          #include <vector>
+
+          namespace {
+
+          class FastIntegerReader {
+          public:
+              explicit FastIntegerReader(std::FILE* input)
+                  : input_(input)
+              {
+              }
+
+              bool read_integer(int& value)
+              {
+                  int character = read_character();
+                  while (true) {
+                      while (character != EOF
+                             && std::isspace(static_cast<unsigned char>(character)) != 0) {
+                          character = read_character();
+                      }
+                      if (character == 'c') {
+                          while (character != EOF && character != '\n') {
+                              character = read_character();
+                          }
+                          character = read_character();
+                          continue;
+                      }
+                      break;
+                  }
+
+                  if (character == EOF || character == '%') {
+                      return false;
+                  }
+
+                  int sign = 1;
+                  if (character == '-') {
+                      sign = -1;
+                      character = read_character();
+                  }
+                  if (character < '0' || character > '9') {
+                      malformed_ = true;
+                      return false;
+                  }
+
+                  int parsed = 0;
+                  while (character >= '0' && character <= '9') {
+                      parsed = parsed * 10 + (character - '0');
+                      character = read_character();
+                  }
+                  value = parsed * sign;
+                  return true;
+              }
+
+              bool malformed() const
+              {
+                  return malformed_;
+              }
+
+          private:
+              int read_character()
+              {
+                  if (position_ == available_) {
+                      available_ = std::fread(buffer_, 1, sizeof(buffer_), input_);
+                      position_ = 0;
+                      if (available_ == 0) {
+                          return EOF;
+                      }
+                  }
+                  return static_cast<unsigned char>(buffer_[position_++]);
+              }
+
+              std::FILE* input_ = nullptr;
+              char buffer_[1 << 20] = {};
+              std::size_t position_ = 0;
+              std::size_t available_ = 0;
+              bool malformed_ = false;
+          };
+
+          bool parse_header(std::FILE* input,
+                            int& variable_count,
+                            int& clause_count,
+                            std::string& error)
+          {
+              char line[4096];
+              while (std::fgets(line, sizeof(line), input) != nullptr) {
+                  char* cursor = line;
+                  while (*cursor != '\0'
+                         && std::isspace(static_cast<unsigned char>(*cursor)) != 0) {
+                      ++cursor;
+                  }
+                  if (*cursor == '\0' || *cursor == 'c') {
+                      continue;
+                  }
+                  if (*cursor != 'p') {
+                      error = "expected a DIMACS problem line";
+                      return false;
+                  }
+
+                  char format[16] = {};
+                  if (std::sscanf(cursor,
+                                  "p %15s %d %d",
+                                  format,
+                                  &variable_count,
+                                  &clause_count) != 3) {
+                      error = "malformed DIMACS problem line";
+                      return false;
+                  }
+                  if (std::strcmp(format, "cnf") != 0
+                      || variable_count < 0
+                      || clause_count < 0) {
+                      error = "unsupported DIMACS problem line";
+                      return false;
+                  }
+                  return true;
+              }
+
+              error = "missing DIMACS problem line";
+              return false;
+          }
+
+          bool parse_dimacs(const char* path,
+                            Solver& solver,
+                            std::string& error)
+          {
+              std::FILE* input = std::fopen(path, "rb");
+              if (input == nullptr) {
+                  error = std::string("cannot open input: ") + std::strerror(errno);
+                  return false;
+              }
+
+              int variable_count = 0;
+              int declared_clause_count = 0;
+              if (!parse_header(input,
+                                variable_count,
+                                declared_clause_count,
+                                error)) {
+                  std::fclose(input);
+                  return false;
+              }
+              if (!solver.reserve_variables(variable_count)) {
+                  error = "invalid variable count";
+                  std::fclose(input);
+                  return false;
+              }
+
+              FastIntegerReader reader(input);
+              std::vector<int> clause;
+              int parsed_clause_count = 0;
+              int literal = 0;
+              while (reader.read_integer(literal)) {
+                  if (literal != 0) {
+                      clause.push_back(literal);
+                      continue;
+                  }
+
+                  if (!solver.add_clause(clause)) {
+                      clause.clear();
+                      ++parsed_clause_count;
+                      continue;
+                  }
+                  clause.clear();
+                  ++parsed_clause_count;
+              }
+              std::fclose(input);
+
+              if (reader.malformed()) {
+                  error = "malformed integer in DIMACS body";
+                  return false;
+              }
+              if (!clause.empty()) {
+                  error = "unterminated DIMACS clause";
+                  return false;
+              }
+              if (parsed_clause_count != declared_clause_count) {
+                  error = "DIMACS clause count mismatch";
+                  return false;
+              }
+              return true;
+          }
+
+          double read_timeout_seconds()
+          {
+              const char* value = std::getenv("UATU_TIMEOUT_SEC");
+              if (value == nullptr || *value == '\0') {
+                  return 0.0;
+              }
+
+              char* end = nullptr;
+              double timeout = std::strtod(value, &end);
+              if (end == value || timeout < 0.0) {
+                  return 0.0;
+              }
+              return timeout;
+          }
+
+          bool environment_enabled(const char* name)
+          {
+              const char* value = std::getenv(name);
+              return value != nullptr
+                  && *value != '\0'
+                  && std::strcmp(value, "0") != 0;
+          }
+
+          void print_stats(const SolverStats& stats)
+          {
+              std::cout << "c decisions " << stats.decisions << '\n';
+              std::cout << "c propagations " << stats.propagations << '\n';
+              std::cout << "c conflicts " << stats.conflicts << '\n';
+              std::cout << "c restarts " << stats.restarts << '\n';
+              std::cout << "c reductions " << stats.reductions << '\n';
+              std::cout << "c learned_core " << stats.learned_core << '\n';
+              std::cout << "c learned_tier2 " << stats.learned_tier2 << '\n';
+              std::cout << "c learned_local " << stats.learned_local << '\n';
+              std::cout << "c tier_promotions " << stats.tier_promotions << '\n';
+              std::cout << "c tier2_demotions " << stats.tier2_demotions << '\n';
+              std::cout << "c deleted_local " << stats.deleted_local << '\n';
+          }
+
+          void print_model(const Solver& solver)
+          {
+              const std::vector<std::int8_t>& assignment = solver.assignment();
+              for (int variable = 0; variable < solver.variable_count(); ++variable) {
+                  int literal = variable + 1;
+                  if (assignment[variable] < 0) {
+                      literal = -literal;
+                  }
+                  std::cout << literal << ' ';
+              }
+              std::cout << "0\n";
+          }
+
+          }
+
+          int main(int argc, char** argv)
+          {
+              if (argc != 2) {
+                  std::cerr << "usage: uatu_solver <instance.cnf>\n";
+                  return 1;
+              }
+
+              try {
+                  Solver solver;
+                  std::string error;
+                  if (!parse_dimacs(argv[1], solver, error)) {
+                      std::cerr << "error: " << error << '\n';
+                      return 1;
+                  }
+
+                  SolveResult result = solver.solve(read_timeout_seconds());
+                  if (result == SolveResult::SATISFIABLE) {
+                      std::cout << "SATISFIABLE\n";
+                  } else if (result == SolveResult::UNSATISFIABLE) {
+                      std::cout << "UNSATISFIABLE\n";
+                  } else {
+                      std::cout << "UNSOLVED\n";
+                  }
+
+                  if (environment_enabled("UATU_PRINT_STATS")) {
+                      print_stats(solver.stats());
+                  }
+                  if (result == SolveResult::SATISFIABLE
+                      && environment_enabled("UATU_PRINT_MODEL")) {
+                      print_model(solver);
+                  }
+                  return 0;
+              } catch (const std::bad_alloc&) {
+                  std::cerr << "error: memory allocation failed\n";
+                  std::cout << "UNSOLVED\n";
+                  return 1;
+              } catch (const std::exception& exception) {
+                  std::cerr << "error: " << exception.what() << '\n';
+                  return 1;
+              }
+          }
+          EOF
+
+          cat > cpu/ver_5/Makefile <<'EOF'
+          CXX ?= g++
+          CPPFLAGS ?=
+          CXXFLAGS ?= -std=c++17 -Wall -Wextra -Wpedantic -O3 -DNDEBUG
+          LDFLAGS ?=
+
+          TARGET := obj/uatu_solver
+          SOURCES := solver.cpp main.cpp
+
+          .PHONY: all clean test
+
+          all: $(TARGET)
+
+          $(TARGET): $(SOURCES) solver.h
+          	mkdir -p obj
+          	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SOURCES) $(LDFLAGS) -o $(TARGET)
+
+          test: $(TARGET)
+          	python3 tests/test_solver.py --solver $(TARGET) --cases 80
+
+          clean:
+          	rm -rf obj
+          EOF
+
+          cat > cpu/ver_5/tests/tier_policy_test.cpp <<'EOF'
+          #include "solver.h"
+
+          #include <cstdlib>
+
+          int main()
+          {
+              if (Solver::classify_lbd(1) != ClauseTier::CORE) {
+                  return EXIT_FAILURE;
+              }
+              if (Solver::classify_lbd(2) != ClauseTier::CORE) {
+                  return EXIT_FAILURE;
+              }
+              if (Solver::classify_lbd(3) != ClauseTier::TIER2) {
+                  return EXIT_FAILURE;
+              }
+              if (Solver::classify_lbd(6) != ClauseTier::TIER2) {
+                  return EXIT_FAILURE;
+              }
+              if (Solver::classify_lbd(7) != ClauseTier::LOCAL) {
+                  return EXIT_FAILURE;
+              }
+              return EXIT_SUCCESS;
+          }
+          EOF
+
+          cat > cpu/ver_5/tests/test_solver.py <<'EOF'
+          #!/usr/bin/env python3
+
+          import argparse
+          import itertools
+          import os
+          import random
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+
+          def brute_force(variable_count, clauses):
+              for values in itertools.product((False, True), repeat=variable_count):
+                  valid = True
+                  for clause in clauses:
+                      satisfied = False
+                      for literal in clause:
+                          value = values[abs(literal) - 1]
+                          if value == (literal > 0):
+                              satisfied = True
+                              break
+                      if not satisfied:
+                          valid = False
+                          break
+                  if valid:
+                      return True
+              return False
+
+
+          def write_cnf(path, variable_count, clauses):
+              with path.open('w') as output:
+                  output.write(f'p cnf {variable_count} {len(clauses)}\n')
+                  for clause in clauses:
+                      output.write(' '.join(str(value) for value in clause))
+                      output.write(' 0\n')
+
+
+          def parse_result(output):
+              for line in output.splitlines():
+                  if line == 'SATISFIABLE':
+                      return 'sat'
+                  if line == 'UNSATISFIABLE':
+                      return 'unsat'
+                  if line == 'UNSOLVED':
+                      return 'unsolved'
+              return 'error'
+
+
+          def parse_model(output):
+              model = []
+              for line in output.splitlines():
+                  fields = line.split()
+                  if not fields or fields[-1] != '0':
+                      continue
+                  try:
+                      values = [int(value) for value in fields]
+                  except ValueError:
+                      continue
+                  if len(values) > 1:
+                      model = values[:-1]
+              return {abs(value): value > 0 for value in model if value != 0}
+
+
+          def verify_model(variable_count, clauses, model):
+              if len(model) < variable_count:
+                  return False
+              for clause in clauses:
+                  if not any(model[abs(literal)] == (literal > 0)
+                             for literal in clause):
+                      return False
+              return True
+
+
+          def run_case(solver, variable_count, clauses, expected, directory, index):
+              cnf_path = directory / f'case_{index}.cnf'
+              write_cnf(cnf_path, variable_count, clauses)
+              environment = os.environ.copy()
+              environment['UATU_TIMEOUT_SEC'] = '10'
+              environment['UATU_PRINT_MODEL'] = '1'
+              completed = subprocess.run(
+                  [solver, str(cnf_path)],
+                  text=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.PIPE,
+                  timeout=15,
+                  env=environment,
+                  check=False,
+              )
+              result = parse_result(completed.stdout)
+              if result != expected:
+                  raise RuntimeError(
+                      f'case {index}: expected {expected}, got {result}; '
+                      f'stdout={completed.stdout!r}; stderr={completed.stderr!r}'
+                  )
+              if result == 'sat':
+                  model = parse_model(completed.stdout)
+                  if not verify_model(variable_count, clauses, model):
+                      raise RuntimeError(f'case {index}: invalid SAT model')
+
+
+          def generate_random_case(rng):
+              variable_count = rng.randint(1, 8)
+              clause_count = rng.randint(1, 28)
+              clauses = []
+              for _ in range(clause_count):
+                  width = rng.randint(1, min(4, variable_count))
+                  variables = rng.sample(range(1, variable_count + 1), width)
+                  clause = [variable if rng.randrange(2) else -variable
+                            for variable in variables]
+                  clauses.append(clause)
+              expected = 'sat' if brute_force(variable_count, clauses) else 'unsat'
+              return variable_count, clauses, expected
+
+
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument('--solver', required=True)
+              parser.add_argument('--cases', type=int, default=80)
+              arguments = parser.parse_args()
+
+              fixed_cases = [
+                  (1, [[1]], 'sat'),
+                  (1, [[1], [-1]], 'unsat'),
+                  (3, [[1], [-1, 2], [-2, 3]], 'sat'),
+                  (2, [[1, 2], [-1, 2], [1, -2], [-1, -2]], 'unsat'),
+                  (4, [[1, 2], [-1, 3], [-2, 3], [-3, 4]], 'sat'),
+              ]
+
+              rng = random.Random(20250830)
+              cases = list(fixed_cases)
+              for _ in range(arguments.cases):
+                  cases.append(generate_random_case(rng))
+
+              with tempfile.TemporaryDirectory() as temporary:
+                  directory = Path(temporary)
+                  for index, (variable_count, clauses, expected) in enumerate(cases):
+                      run_case(
+                          arguments.solver,
+                          variable_count,
+                          clauses,
+                          expected,
+                          directory,
+                          index,
+                      )
+              print(f'validated {len(cases)} deterministic SAT/UNSAT cases')
+
+
+          if __name__ == '__main__':
+              main()
+          EOF
+          chmod +x cpu/ver_5/tests/test_solver.py
+
+          cat > cpu/ver_5/README.md <<'EOF'
+          # Uatu CPU Ver5
+
+          This experimental version is **V3 plus Tiered Clause Management**.
+
+          It intentionally keeps the V3-style VSIDS decision policy and first-UIP
+          learning. CHB and recursive learned-clause minimization are not enabled.
+
+          Learned clauses are managed in three LBD-based tiers:
+
+          - CORE: LBD at most 2. Retained permanently.
+          - TIER2: LBD from 3 through 6. Retained while useful and demoted when stale.
+          - LOCAL: LBD above 6. Periodically reduced by LBD, activity, and recency.
+
+          A learned clause can be promoted when its observed LBD improves. Locked
+          clauses and learned binary clauses are protected from deletion.
+          EOF
+
+      - name: Verify variant composition
+        run: |
+          set -euo pipefail
+          test ! -e cpu/ver_5/chb.cpp
+          test ! -e cpu/ver_5/chb.h
+          test ! -e cpu/ver_5/recursive.cpp
+          test ! -e cpu/ver_5/recursive.h
+          ! grep -R -n -E 'CHB|chb|recursive[_A-Za-z]*minimi' \
+              cpu/ver_5/solver.cpp cpu/ver_5/solver.h cpu/ver_5/main.cpp
+          grep -q 'ClauseTier::CORE' cpu/ver_5/solver.cpp
+          grep -q 'ClauseTier::TIER2' cpu/ver_5/solver.cpp
+          grep -q 'ClauseTier::LOCAL' cpu/ver_5/solver.cpp
+
+      - name: Build with strict warnings
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all
+
+      - name: Run deterministic functional tests
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 test
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -O2 \
+              -Icpu/ver_5 \
+              cpu/ver_5/tests/tier_policy_test.cpp \
+              cpu/ver_5/solver.cpp \
+              -o /tmp/tier_policy_test
+          /tmp/tier_policy_test
+
+      - name: Run AddressSanitizer and UndefinedBehaviorSanitizer tests
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean
+          make -C cpu/ver_5 \
+              CXXFLAGS='-std=c++17 -Wall -Wextra -Wpedantic -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+              LDFLAGS='-fsanitize=address,undefined'
+          ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+              python3 cpu/ver_5/tests/test_solver.py \
+                  --solver cpu/ver_5/obj/uatu_solver \
+                  --cases 20
+          make -C cpu/ver_5 clean all
+
+      - name: Validate on 10 SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import io
+          import os
+          import subprocess
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          raw_url = (
+              'https://raw.githubusercontent.com/SeMinLim/uatu/'
+              'ca707ee/evaluation/ver5_vs_minisat_100_raw.csv'
+          )
+          timeout_seconds = 180
+          pool_directory = Path('/tmp/uatu-tiered-benchmarks')
+          pool_directory.mkdir(parents=True, exist_ok=True)
+
+          raw_text = urllib.request.urlopen(raw_url, timeout=120).read().decode()
+          rows = list(csv.DictReader(io.StringIO(raw_text)))
+          grouped = {}
+          for row in rows:
+              if row['source'] != 'new':
+                  continue
+              index = int(row['index'])
+              grouped.setdefault(index, {})[row['solver']] = row
+
+          candidates = []
+          for index, pair in grouped.items():
+              if set(pair) != {'minisat', 'ver5'}:
+                  continue
+              if pair['minisat']['correct'] != '1' or pair['ver5']['correct'] != '1':
+                  continue
+              expected = pair['ver5']['expected']
+              score = max(
+                  float(pair['minisat']['wall_sec']),
+                  float(pair['ver5']['wall_sec']),
+              )
+              candidates.append({
+                  'index': index,
+                  'expected': expected,
+                  'hash': pair['ver5']['hash'],
+                  'url': pair['ver5']['url'],
+                  'prior_wall_sec': score,
+              })
+
+          candidates.sort(key=lambda item: (item['prior_wall_sec'], item['hash']))
+          selected = []
+          for expected in ('sat', 'unsat'):
+              matching = [item for item in candidates if item['expected'] == expected]
+              if len(matching) < 5:
+                  raise SystemExit(f'not enough prior-correct {expected} candidates')
+              selected.extend(matching[:5])
+          selected.sort(key=lambda item: item['index'])
+
+          manifest_path = Path('evaluation/ver5_tiered_10_manifest.csv')
+          with manifest_path.open('w', newline='') as output:
+              writer = csv.DictWriter(
+                  output,
+                  fieldnames=['index', 'expected', 'hash', 'url', 'prior_wall_sec'],
+              )
+              writer.writeheader()
+              writer.writerows(selected)
+
+          def parse_result(text):
+              for line in text.splitlines():
+                  if line == 'SATISFIABLE':
+                      return 'sat'
+                  if line == 'UNSATISFIABLE':
+                      return 'unsat'
+                  if line == 'UNSOLVED':
+                      return 'unsolved'
+              return 'error'
+
+          def parse_numeric_model(text):
+              model = []
+              for line in text.splitlines():
+                  fields = line.split()
+                  if not fields or fields[-1] != '0':
+                      continue
+                  try:
+                      values = [int(value) for value in fields]
+                  except ValueError:
+                      continue
+                  if len(values) > 1:
+                      model = values[:-1]
+              return {abs(value): value > 0 for value in model if value != 0}
+
+          def parse_minisat_model(path):
+              if not path.exists():
+                  return {}
+              lines = path.read_text(errors='ignore').splitlines()
+              model = []
+              for line in lines[1:]:
+                  for field in line.split():
+                      value = int(field)
+                      if value != 0:
+                          model.append(value)
+              return {abs(value): value > 0 for value in model}
+
+          def verify_model(cnf_path, assignment):
+              if not assignment:
+                  return False
+              clause = []
+              with cnf_path.open(errors='ignore') as source:
+                  for line in source:
+                      stripped = line.strip()
+                      if not stripped or stripped[0] in 'cp%':
+                          continue
+                      for field in stripped.split():
+                          literal = int(field)
+                          if literal == 0:
+                              if not any(
+                                  assignment.get(abs(item), False) == (item > 0)
+                                  for item in clause
+                              ):
+                                  return False
+                              clause.clear()
+                          else:
+                              clause.append(literal)
+              return not clause
+
+          def run_command(command, environment=None):
+              started = time.monotonic()
+              try:
+                  completed = subprocess.run(
+                      command,
+                      text=True,
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      timeout=timeout_seconds + 15,
+                      env=environment,
+                      check=False,
+                  )
+                  wall = time.monotonic() - started
+                  return completed.returncode, completed.stdout, wall
+              except subprocess.TimeoutExpired as exception:
+                  output = exception.stdout or ''
+                  if isinstance(output, bytes):
+                      output = output.decode(errors='ignore')
+                  return 124, output, time.monotonic() - started
+
+          result_rows = []
+          total_learned = 0
+          for item in selected:
+              compressed_path = pool_directory / f"{item['hash']}.cnf.xz"
+              cnf_path = pool_directory / f"{item['hash']}.cnf"
+              model_path = pool_directory / f"{item['hash']}.minisat.model"
+
+              print(f"Downloading index {item['index']} {item['hash']}", flush=True)
+              urllib.request.urlretrieve(item['url'], compressed_path)
+              with cnf_path.open('wb') as output:
+                  decompression = subprocess.run(
+                      ['xz', '-dc', str(compressed_path)],
+                      stdout=output,
+                      check=False,
+                  )
+              if decompression.returncode != 0:
+                  raise SystemExit(f"xz failed for index {item['index']}")
+
+              environment = os.environ.copy()
+              environment['UATU_TIMEOUT_SEC'] = str(timeout_seconds)
+              environment['UATU_PRINT_MODEL'] = '1'
+              environment['UATU_PRINT_STATS'] = '1'
+              uatu_rc, uatu_output, uatu_wall = run_command(
+                  ['cpu/ver_5/obj/uatu_solver', str(cnf_path)],
+                  environment,
+              )
+              uatu_result = parse_result(uatu_output)
+              uatu_model_valid = True
+              if uatu_result == 'sat':
+                  uatu_model_valid = verify_model(
+                      cnf_path,
+                      parse_numeric_model(uatu_output),
+                  )
+              for line in uatu_output.splitlines():
+                  if line.startswith('c learned_'):
+                      total_learned += int(line.split()[-1])
+
+              minisat_rc, minisat_output, minisat_wall = run_command([
+                  'minisat',
+                  '-verb=0',
+                  f'-cpu-lim={timeout_seconds}',
+                  str(cnf_path),
+                  str(model_path),
+              ])
+              minisat_result = parse_result(minisat_output)
+              minisat_model_valid = True
+              if minisat_result == 'sat':
+                  minisat_model_valid = verify_model(
+                      cnf_path,
+                      parse_minisat_model(model_path),
+                  )
+
+              uatu_correct = (
+                  uatu_result == item['expected'] and uatu_model_valid
+              )
+              minisat_correct = (
+                  minisat_result == item['expected'] and minisat_model_valid
+              )
+              result_rows.append({
+                  'index': item['index'],
+                  'expected': item['expected'],
+                  'hash': item['hash'],
+                  'solver': 'ver5-tiered',
+                  'result': uatu_result,
+                  'correct': int(uatu_correct),
+                  'model_valid': int(uatu_model_valid),
+                  'wall_sec': f'{uatu_wall:.6f}',
+                  'exit_code': uatu_rc,
+              })
+              result_rows.append({
+                  'index': item['index'],
+                  'expected': item['expected'],
+                  'hash': item['hash'],
+                  'solver': 'minisat',
+                  'result': minisat_result,
+                  'correct': int(minisat_correct),
+                  'model_valid': int(minisat_model_valid),
+                  'wall_sec': f'{minisat_wall:.6f}',
+                  'exit_code': minisat_rc,
+              })
+
+              compressed_path.unlink(missing_ok=True)
+              cnf_path.unlink(missing_ok=True)
+              model_path.unlink(missing_ok=True)
+
+              if not uatu_correct or not minisat_correct:
+                  print(uatu_output[-4000:])
+                  print(minisat_output[-4000:])
+                  raise SystemExit(
+                      f"validation failed at index {item['index']}: "
+                      f"Uatu={uatu_result}, MiniSAT={minisat_result}, "
+                      f"expected={item['expected']}"
+                  )
+
+          raw_path = Path('evaluation/ver5_tiered_10_raw.csv')
+          with raw_path.open('w', newline='') as output:
+              writer = csv.DictWriter(
+                  output,
+                  fieldnames=[
+                      'index', 'expected', 'hash', 'solver', 'result',
+                      'correct', 'model_valid', 'wall_sec', 'exit_code',
+                  ],
+              )
+              writer.writeheader()
+              writer.writerows(result_rows)
+
+          uatu_rows = [row for row in result_rows if row['solver'] == 'ver5-tiered']
+          minisat_rows = [row for row in result_rows if row['solver'] == 'minisat']
+          lines = [
+              '# V3 + Tiered Clause Management Smoke Validation',
+              '',
+              '- Dataset: 10 SAT Competition 2025 Main Track instances',
+              '- Composition: 5 SAT and 5 UNSAT',
+              '- Selection: fastest prior-correct instances from the fixed 100-instance evaluation',
+              '- Timeout: 180 seconds per solver and instance',
+              '- SAT results: independently checked against the emitted model',
+              '- UNSAT results: checked against competition labels and MiniSAT',
+              '',
+              '| Solver | Correct | SAT | UNSAT | Total wall time (s) |',
+              '|---|---:|---:|---:|---:|',
+              (
+                  f"| `ver5-tiered` | {sum(int(row['correct']) for row in uatu_rows)}/10 | "
+                  f"{sum(row['expected'] == 'sat' and row['correct'] == 1 for row in uatu_rows)} | "
+                  f"{sum(row['expected'] == 'unsat' and row['correct'] == 1 for row in uatu_rows)} | "
+                  f"{sum(float(row['wall_sec']) for row in uatu_rows):.6f} |"
+              ),
+              (
+                  f"| `minisat` | {sum(int(row['correct']) for row in minisat_rows)}/10 | "
+                  f"{sum(row['expected'] == 'sat' and row['correct'] == 1 for row in minisat_rows)} | "
+                  f"{sum(row['expected'] == 'unsat' and row['correct'] == 1 for row in minisat_rows)} | "
+                  f"{sum(float(row['wall_sec']) for row in minisat_rows):.6f} |"
+              ),
+              '',
+              f'- Learned clauses observed across the 10 Uatu runs: {total_learned}',
+              '',
+              'Result: **PASS**',
+              '',
+          ]
+          Path('evaluation/ver5_tiered_10_report.md').write_text('\n'.join(lines))
+          print('\n'.join(lines))
+          PY
+
+      - name: Commit validated implementation and results
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_5 \
+                  evaluation/ver5_tiered_10_manifest.csv \
+                  evaluation/ver5_tiered_10_raw.csv \
+                  evaluation/ver5_tiered_10_report.md
+          git commit -m 'feat: implement V3 plus tiered clause management in Ver5'
+          git push origin HEAD:temp/v3-tiered-evaluation
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v3-tiered-validation
+          path: |
+            evaluation/ver5_tiered_10_manifest.csv
+            evaluation/ver5_tiered_10_raw.csv
+            evaluation/ver5_tiered_10_report.md
+          retention-days: 7
