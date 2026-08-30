@@ -1,0 +1,281 @@
+name: Validate Uatu Ver5 Recursive Tiered
+
+on:
+  push:
+    branches:
+      - temp/ver5-recursive-tiered-validation
+    paths:
+      - .github/workflows/ver5-recursive-tiered-validation.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: uatu-ver5-recursive-tiered-validation
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver5-recursive-tiered-validation
+          fetch-depth: 0
+
+      - name: Implement recursive minimization with tiered clause management
+        run: |
+          set -euo pipefail
+          python3 .github/prepare_ver5_recursive_tiered.py
+          grep -q '#include "recursive.h"' cpu/ver_5/solver.cpp
+          grep -q 'minimizeLearnedClauseRecursive(\*this)' cpu/ver_5/solver.cpp
+          grep -q 'CLAUSE_CORE' cpu/ver_5/solver.h
+          grep -q 'CLAUSE_TIER2' cpu/ver_5/solver.h
+          grep -q 'CLAUSE_LOCAL' cpu/ver_5/solver.h
+          test -f cpu/ver_5/recursive.cpp
+          test -f cpu/ver_5/recursive.h
+          test ! -f cpu/ver_5/chb.cpp
+          test ! -f cpu/ver_5/chb.h
+
+      - name: Build release, debug, and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_5 debug \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror \
+              -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+              cpu/ver_5/solver.cpp cpu/ver_5/recursive.cpp cpu/ver_5/main.cpp \
+              -o cpu/ver_5/obj/uatu_solver_sanitize
+
+      - name: Differential and sanitizer validation
+        run: |
+          set -euo pipefail
+          python3 .github/validate_ver5_recursive_tiered.py \
+              cpu/ver_5/obj/uatu_solver_sanitize
+
+      - name: Commit implementation to validation branch
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add README.md cpu/ver_5
+          git commit -m 'replace ver_5 with recursive minimization and tiered clauses'
+          git push origin HEAD:temp/ver5-recursive-tiered-validation
+
+  benchmark:
+    needs: implement
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include:
+          - id: 18
+            expected: unsat
+            hash: 5c24cfeff639fefdead9a5641f65fa22
+          - id: 21
+            expected: sat
+            hash: 69f6dd335626a9b71bfc6f2332f52b9d
+          - id: 54
+            expected: sat
+            hash: 53c21f3e78f060883026b5a12ba691d8
+          - id: 63
+            expected: unsat
+            hash: 8f391f2bf8167f1b96467f3479b33dc5
+          - id: 70
+            expected: sat
+            hash: d89fc3e9c24e0383e940464f4704657e
+          - id: 72
+            expected: unsat
+            hash: 09cd83e233380d0ba1fc56cee88367b1
+          - id: 80
+            expected: sat
+            hash: 602c8a200227ab9d64d855164d35b5cf
+          - id: 84
+            expected: unsat
+            hash: f6f91f6a44c3953b788c026cbbaa4e91
+          - id: 92
+            expected: sat
+            hash: c86b261162cef181dc513963a8acb77f
+          - id: 95
+            expected: unsat
+            hash: d971241ca861121371d20be1d61c15a3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver5-recursive-tiered-validation
+
+      - name: Build Ver5
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Download SAT Competition 2025 benchmark
+        env:
+          BENCHMARK_HASH: ${{ matrix.hash }}
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          url="https://benchmark-database.de/file/${BENCHMARK_HASH}?context=cnf"
+          curl -fL --retry 8 --retry-delay 5 "$url" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run and verify Ver5
+        env:
+          BENCHMARK_ID: ${{ matrix.id }}
+          BENCHMARK_HASH: ${{ matrix.hash }}
+          EXPECTED: ${{ matrix.expected }}
+        run: |
+          set -euo pipefail
+          set +e
+          /usr/bin/time -q -f '%e,%U,%S,%M' -o work/timing.csv \
+              timeout --signal=TERM --kill-after=5s 610s \
+              env UATU_TIMEOUT_SEC=600 UATU_PRINT_MODEL=1 \
+              cpu/ver_5/obj/uatu_solver work/instance.cnf \
+              > work/uatu.out 2>&1
+          rc=$?
+          set -e
+
+          actual=unknown
+          if grep -qx 'UNSATISFIABLE' work/uatu.out; then
+              actual=unsat
+          elif grep -qx 'SATISFIABLE' work/uatu.out; then
+              actual=sat
+          fi
+          if [[ "$actual" != "$EXPECTED" ]]; then
+              cat work/uatu.out
+              printf 'Expected %s but received %s with exit code %s\n' \
+                  "$EXPECTED" "$actual" "$rc"
+              exit 1
+          fi
+
+          model_valid=1
+          if [[ "$actual" == sat ]]; then
+              python3 - <<'PY'
+          from pathlib import Path
+
+          output = Path('work/uatu.out').read_text(errors='ignore')
+          model = []
+          for line in output.splitlines():
+              fields = line.split()
+              if not fields or fields[-1] != '0':
+                  continue
+              try:
+                  values = [int(value) for value in fields]
+              except ValueError:
+                  continue
+              if len(values) > 1:
+                  model = values[:-1]
+
+          assignment = {abs(literal): literal > 0 for literal in model if literal}
+          if not assignment:
+              raise SystemExit('missing SAT model')
+
+          clause = []
+          for line in Path('work/instance.cnf').read_text(errors='ignore').splitlines():
+              stripped = line.strip()
+              if not stripped or stripped[0] in 'cp%':
+                  continue
+              for token in stripped.split():
+                  literal = int(token)
+                  if literal == 0:
+                      if not any(
+                          assignment.get(abs(item), False) == (item > 0)
+                          for item in clause
+                      ):
+                          raise SystemExit('invalid SAT model')
+                      clause.clear()
+                  else:
+                      clause.append(literal)
+          if clause:
+              raise SystemExit('unterminated DIMACS clause')
+          PY
+          fi
+
+          IFS=',' read -r wall user sys rss < work/timing.csv
+          stat_value() {
+              local label="$1"
+              grep -F "$label" work/uatu.out | tail -n 1 | \
+                  awk -F: '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}'
+          }
+          minimized=$(stat_value 'Minimized Literals')
+          reductions=$(stat_value 'Clause Reductions')
+          core=$(stat_value 'Core Clauses')
+          tier2=$(stat_value 'Tier2 Clauses')
+          local_count=$(stat_value 'Local Clauses')
+
+          printf 'id,expected,result,correct,model_valid,wall_sec,user_sec,sys_sec,rss_kb,exit_code,hash,minimized,reductions,core,tier2,local\n' > result/result.csv
+          printf '%s,%s,%s,1,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+              "$BENCHMARK_ID" "$EXPECTED" "$actual" "$model_valid" \
+              "$wall" "$user" "$sys" "$rss" "$rc" "$BENCHMARK_HASH" \
+              "$minimized" "$reductions" "$core" "$tier2" "$local_count" \
+              >> result/result.csv
+          cat result/result.csv
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-recursive-tiered-${{ matrix.id }}
+          path: result/result.csv
+          retention-days: 3
+
+  finalize:
+    needs: benchmark
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver5-recursive-tiered-validation
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver5-recursive-tiered-*
+          path: downloaded
+          merge-multiple: false
+
+      - name: Aggregate validation results
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = []
+          for path in Path('downloaded').glob('*/result.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+
+          rows.sort(key=lambda row: int(row['id']))
+          if len(rows) != 10:
+              raise SystemExit(f'expected 10 results, found {len(rows)}')
+          if any(row['correct'] != '1' or row['result'] != row['expected']
+                 for row in rows):
+              raise SystemExit('at least one benchmark failed validation')
+
+          sat = sum(row['expected'] == 'sat' for row in rows)
+          unsat = sum(row['expected'] == 'unsat' for row in rows)
+          minimized = sum(int(row['minimized']) for row in rows)
+          print(
+              f'SAT Competition 2025 validation: 10/10 correct; '
+              f'SAT={sat}; UNSAT={unsat}; '
+              f'minimized literals across smoke set={minimized}'
+          )
+          PY
+
+      - name: Remove temporary validation files
+        run: |
+          set -euo pipefail
+          rm -rf downloaded
+          rm -rf .github
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add -A .github
+          git commit -m 'validate ver_5 recursive minimization with tiered clauses'
+          git push origin HEAD:temp/ver5-recursive-tiered-validation
