@@ -1,0 +1,33 @@
+{
+  "current_ver5_commit": "e63ffac9f5c5599b9de14ea8470b6bf6b1d2c958",
+  "benchmarks": 100,
+  "sat_benchmarks": 50,
+  "unsat_benchmarks": 50,
+  "timeout_sec": 1000,
+  "par2_penalty_sec": 2000,
+  "beats_minisat": false,
+  "par2_speedup_over_minisat": 0.9659208390297436,
+  "ver5_par2_relative_to_minisat": 1.035281525766116,
+  "minisat": {
+    "solver": "minisat",
+    "benchmarks": 100,
+    "solved": 46,
+    "sat_solved": 25,
+    "unsat_solved": 21,
+    "wrong_answers": 0,
+    "errors": 0,
+    "par2_sec": 1173.1182000000001,
+    "solved_time_sec": 9311.82
+  },
+  "ver5": {
+    "solver": "ver5",
+    "benchmarks": 100,
+    "solved": 44,
+    "sat_solved": 24,
+    "unsat_solved": 20,
+    "wrong_answers": 0,
+    "errors": 1,
+    "par2_sec": 1214.5076,
+    "solved_time_sec": 9450.76
+  }
+}
