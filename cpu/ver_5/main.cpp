@@ -1,4 +1,6 @@
 #include "solver.h"
+#include "chb.h"
+
 #include <cstdlib>
 
 
@@ -17,7 +19,7 @@ int main( int argc, char **argv ) {
 	} else if ( result == 30 ) {
 		printf( "UNSOLVED\n" );
 	} else {
-		result = solver.solve();
+		result = solveCHB(solver);
 		if ( result == 10 ) {
 			printf( "SATISFIABLE\n" );
 			const char *print = getenv("UATU_PRINT_MODEL");
@@ -51,6 +53,7 @@ int main( int argc, char **argv ) {
 	printf( "Minimized Literals   : %lld\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %lld\n", solver.clauseActivityBumps );
 	printf( "Dynamic LBD Updates  : %lld\n", solver.dynamicLBDUpdates );
+	printf( "CHB Score Updates    : %lld\n", getCHBScoreUpdates() );
 	printf( "Core Promotions      : %lld\n", solver.corePromotions );
 	printf( "Tier2 Promotions     : %lld\n", solver.tier2Promotions );
 	printf( "Tier2 Demotions      : %lld\n", solver.tier2Demotions );
