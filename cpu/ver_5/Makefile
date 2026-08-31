@@ -8,8 +8,8 @@ LDLIBS ?=
 TARGET := obj/uatu_solver
 PROFILE_TARGET := obj/uatu_solver_profile
 DEBUG_TARGET := obj/uatu_solver_debug
-SOURCES := solver.cpp recursive.cpp main.cpp
-HEADERS := solver.h recursive.h
+SOURCES := solver.cpp chb.cpp recursive.cpp main.cpp
+HEADERS := solver.h chb.h recursive.h
 
 .PHONY: all release profile debug clean run run-profile run-debug
 
