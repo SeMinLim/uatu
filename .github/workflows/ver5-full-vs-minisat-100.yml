@@ -1,0 +1,411 @@
+name: Evaluate Uatu Ver5 Full vs MiniSAT on 100 SAT 2025 Benchmarks
+
+on:
+  push:
+    branches:
+      - temp/ver5-full-vs-minisat-100
+    paths:
+      - .github/workflows/ver5-full-vs-minisat-100.yml
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: uatu-ver5-full-vs-minisat-100
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the fixed random 100-instance subset
+        id: prepare
+        run: |
+          set -euo pipefail
+          mkdir -p prepared
+          curl -fL --retry 8 --retry-delay 5 \
+              https://raw.githubusercontent.com/SeMinLim/uatu/ca707ee406a86700661533deb98bb2ebab079469/evaluation/ver5_vs_minisat_100_manifest.csv \
+              -o prepared/manifest.csv
+          python3 - <<'PY'
+          import csv
+          import json
+          import os
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('prepared/manifest.csv').open(newline='')))
+          if len(rows) != 100:
+              raise SystemExit(f'expected 100 benchmarks, found {len(rows)}')
+          if len({row['hash'] for row in rows}) != 100:
+              raise SystemExit('benchmark hashes are not unique')
+          if sum(row['expected'] == 'sat' for row in rows) != 50:
+              raise SystemExit('expected 50 SAT benchmarks')
+          if sum(row['expected'] == 'unsat' for row in rows) != 50:
+              raise SystemExit('expected 50 UNSAT benchmarks')
+
+          matrix = []
+          for row in rows:
+              matrix.append({
+                  'index': int(row['index']),
+                  'expected': row['expected'],
+                  'hash': row['hash'],
+                  'url': row['url'],
+              })
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
+          print('Prepared 100 unique benchmarks: 50 SAT and 50 UNSAT')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-full-evaluation-manifest
+          path: prepared/manifest.csv
+          retention-days: 7
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MiniSAT and build Uatu Ver5
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y minisat xz-utils
+          make -C cpu/ver_5 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Download benchmark
+        env:
+          BENCHMARK_URL: ${{ matrix.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          curl -fL --retry 8 --retry-delay 5 "$BENCHMARK_URL" \
+              -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run MiniSAT and Uatu Ver5
+        env:
+          INDEX: ${{ matrix.index }}
+          EXPECTED: ${{ matrix.expected }}
+          BENCHMARK_HASH: ${{ matrix.hash }}
+          BENCHMARK_URL: ${{ matrix.url }}
+          TIMEOUT_SEC: 1000
+        run: |
+          set -euo pipefail
+
+          cat > work/verify_model.py <<'PY'
+          import sys
+          from pathlib import Path
+
+          solver, output_path, model_path, cnf_path = sys.argv[1:]
+          model = []
+          if solver == 'minisat':
+              model_file = Path(model_path)
+              if not model_file.exists():
+                  raise SystemExit(1)
+              for line in model_file.read_text(errors='ignore').splitlines():
+                  fields = line.split()
+                  for field in fields:
+                      try:
+                          literal = int(field)
+                      except ValueError:
+                          continue
+                      if literal != 0:
+                          model.append(literal)
+          else:
+              for line in Path(output_path).read_text(errors='ignore').splitlines():
+                  fields = line.split()
+                  if not fields or fields[-1] != '0':
+                      continue
+                  try:
+                      values = [int(value) for value in fields]
+                  except ValueError:
+                      continue
+                  if len(values) > 1:
+                      model = values[:-1]
+
+          assignment = {abs(literal): literal > 0 for literal in model if literal}
+          if not assignment:
+              raise SystemExit(1)
+
+          clause = []
+          with open(cnf_path, errors='ignore') as source:
+              for line in source:
+                  stripped = line.strip()
+                  if not stripped or stripped[0] in 'cp%':
+                      continue
+                  for token in stripped.split():
+                      literal = int(token)
+                      if literal == 0:
+                          if not any(
+                              assignment.get(abs(item), False) == (item > 0)
+                              for item in clause
+                          ):
+                              raise SystemExit(1)
+                          clause.clear()
+                      else:
+                          clause.append(literal)
+          if clause:
+              raise SystemExit(1)
+          PY
+
+          printf 'index,expected,solver,result,correct,model_valid,wall_sec,user_sec,sys_sec,rss_kb,exit_code,hash,url\n' \
+              > result/results.csv
+
+          total_mem_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+          reserve_mem_kb=2097152
+          if (( total_mem_kb > reserve_mem_kb + 1048576 )); then
+              memory_limit_kb=$((total_mem_kb - reserve_mem_kb))
+          else
+              memory_limit_kb=$((total_mem_kb * 70 / 100))
+          fi
+
+          run_one() {
+              local solver="$1"
+              local output="work/${solver}.out"
+              local timing="work/${solver}.time"
+              local model="work/${solver}.model"
+              local command
+
+              if [[ "$solver" == minisat ]]; then
+                  command="ulimit -v ${memory_limit_kb}; exec minisat -verb=0 -cpu-lim=${TIMEOUT_SEC} work/instance.cnf work/minisat.model"
+              else
+                  command="ulimit -v ${memory_limit_kb}; exec env UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_PRINT_MODEL=1 cpu/ver_5/obj/uatu_solver work/instance.cnf"
+              fi
+
+              set +e
+              /usr/bin/time -q -f '%e,%U,%S,%M' -o "$timing" \
+                  timeout --signal=TERM --kill-after=5s "$((TIMEOUT_SEC + 10))s" \
+                  bash -lc "$command" > "$output" 2>&1
+              local rc=$?
+              set -e
+
+              local answer=error
+              if grep -qx 'UNSATISFIABLE' "$output"; then
+                  answer=unsat
+              elif grep -qx 'SATISFIABLE' "$output"; then
+                  answer=sat
+              elif grep -qx 'UNSOLVED' "$output" || \
+                   grep -q 'INDETERMINATE' "$output" || \
+                   [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then
+                  answer=timeout
+              fi
+
+              local model_valid=1
+              if [[ "$answer" == sat ]]; then
+                  set +e
+                  python3 work/verify_model.py "$solver" "$output" "$model" \
+                      work/instance.cnf
+                  local verify_rc=$?
+                  set -e
+                  if [[ $verify_rc -ne 0 ]]; then model_valid=0; fi
+              fi
+
+              local correct=0
+              if [[ "$answer" == "$EXPECTED" && $model_valid -eq 1 ]]; then
+                  correct=1
+              fi
+
+              local wall="$((TIMEOUT_SEC + 10))"
+              local user=0
+              local sys=0
+              local rss=0
+              if [[ -s "$timing" ]]; then
+                  IFS=',' read -r wall user sys rss < "$timing" || true
+              fi
+
+              printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                  "$INDEX" "$EXPECTED" "$solver" "$answer" "$correct" \
+                  "$model_valid" "$wall" "$user" "$sys" "$rss" "$rc" \
+                  "$BENCHMARK_HASH" "$BENCHMARK_URL" >> result/results.csv
+          }
+
+          if (( INDEX % 2 == 0 )); then
+              order=(minisat ver5)
+          else
+              order=(ver5 minisat)
+          fi
+          for solver in "${order[@]}"; do
+              run_one "$solver"
+          done
+
+          cat result/results.csv
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-full-pair-${{ matrix.index }}
+          path: result/results.csv
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    needs:
+      - prepare
+      - evaluate
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver5-full-vs-minisat-100
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-full-evaluation-manifest
+          path: inputs
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver5-full-pair-*
+          path: downloaded
+          merge-multiple: false
+
+      - name: Aggregate PAR-2 results
+        run: |
+          set -euo pipefail
+          mkdir -p evaluation
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          timeout = 1000.0
+          rows = []
+          for path in Path('downloaded').glob('*/results.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+
+          if len(rows) != 200:
+              raise SystemExit(f'expected 200 solver rows, found {len(rows)}')
+          keys = {(row['solver'], int(row['index'])) for row in rows}
+          if len(keys) != 200:
+              raise SystemExit('duplicate or missing solver/index rows detected')
+          for solver in ('minisat', 'ver5'):
+              indices = {int(row['index']) for row in rows if row['solver'] == solver}
+              if indices != set(range(100)):
+                  raise SystemExit(f'{solver} did not complete exactly 100 benchmarks')
+
+          rows.sort(key=lambda row: (row['solver'], int(row['index'])))
+          raw_path = Path('evaluation/ver5_full_vs_minisat_100_raw.csv')
+          with raw_path.open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader()
+              writer.writerows(rows)
+
+          def summarize(solver):
+              selected = [row for row in rows if row['solver'] == solver]
+              solved = [row for row in selected if row['correct'] == '1']
+              wrong = [
+                  row for row in selected
+                  if row['result'] in ('sat', 'unsat') and row['correct'] != '1'
+              ]
+              errors = [row for row in selected if row['result'] == 'error']
+              score = sum(
+                  min(float(row['wall_sec']), timeout)
+                  if row['correct'] == '1' else 2.0 * timeout
+                  for row in selected
+              ) / len(selected)
+              return {
+                  'solver': solver,
+                  'benchmarks': len(selected),
+                  'solved': len(solved),
+                  'sat_solved': sum(
+                      row['expected'] == 'sat' and row['correct'] == '1'
+                      for row in selected
+                  ),
+                  'unsat_solved': sum(
+                      row['expected'] == 'unsat' and row['correct'] == '1'
+                      for row in selected
+                  ),
+                  'wrong_answers': len(wrong),
+                  'errors': len(errors),
+                  'par2_sec': score,
+                  'solved_time_sec': sum(float(row['wall_sec']) for row in solved),
+              }
+
+          minisat = summarize('minisat')
+          ver5 = summarize('ver5')
+          beats = ver5['par2_sec'] < minisat['par2_sec']
+          par2_factor = minisat['par2_sec'] / ver5['par2_sec']
+          ver5_relative = ver5['par2_sec'] / minisat['par2_sec']
+
+          decision = {
+              'current_ver5_commit': 'e63ffac9f5c5599b9de14ea8470b6bf6b1d2c958',
+              'benchmarks': 100,
+              'sat_benchmarks': 50,
+              'unsat_benchmarks': 50,
+              'timeout_sec': 1000,
+              'par2_penalty_sec': 2000,
+              'beats_minisat': beats,
+              'par2_speedup_over_minisat': par2_factor,
+              'ver5_par2_relative_to_minisat': ver5_relative,
+              'minisat': minisat,
+              'ver5': ver5,
+          }
+          Path('evaluation/ver5_full_vs_minisat_100_decision.json').write_text(
+              json.dumps(decision, indent=2) + '\n'
+          )
+          Path('evaluation/ver5_full_vs_minisat_100_manifest.csv').write_text(
+              Path('inputs/manifest.csv').read_text()
+          )
+
+          report = [
+              '# Uatu Ver5 Full vs MiniSAT',
+              '',
+              '- Dataset: 100 fixed-random SAT Competition 2025 Main Track instances',
+              '- Composition: 50 SAT and 50 UNSAT',
+              '- Timeout: 1,000 seconds per solver and benchmark',
+              '- PAR-2 penalty: 2,000 seconds for timeout, error, or wrong answer',
+              '- Execution: both solvers ran sequentially on the same runner; order alternated by index',
+              '',
+              '| Solver | Solved | SAT | UNSAT | Wrong | Errors | PAR-2 (s) |',
+              '|---|---:|---:|---:|---:|---:|---:|',
+              f"| MiniSAT | {minisat['solved']} | {minisat['sat_solved']} | {minisat['unsat_solved']} | {minisat['wrong_answers']} | {minisat['errors']} | {minisat['par2_sec']:.6f} |",
+              f"| Uatu Ver5 | {ver5['solved']} | {ver5['sat_solved']} | {ver5['unsat_solved']} | {ver5['wrong_answers']} | {ver5['errors']} | {ver5['par2_sec']:.6f} |",
+              '',
+              f"MiniSAT exceeded: **{'YES' if beats else 'NO'}**",
+              f"PAR-2 speedup over MiniSAT: **{par2_factor:.6f}x**",
+              f"Ver5 PAR-2 relative to MiniSAT: **{ver5_relative:.6f}x**",
+              '',
+          ]
+          Path('evaluation/ver5_full_vs_minisat_100_report.md').write_text(
+              '\n'.join(report)
+          )
+          print('\n'.join(report))
+          PY
+
+      - name: Publish evaluation result on the temporary branch
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add evaluation/ver5_full_vs_minisat_100_*
+          git commit -m 'eval: record Ver5 full versus MiniSAT on 100 benchmarks'
+          git push origin HEAD:temp/ver5-full-vs-minisat-100
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-full-vs-minisat-100-results
+          path: |
+            evaluation/ver5_full_vs_minisat_100_manifest.csv
+            evaluation/ver5_full_vs_minisat_100_raw.csv
+            evaluation/ver5_full_vs_minisat_100_decision.json
+            evaluation/ver5_full_vs_minisat_100_report.md
+          retention-days: 7
