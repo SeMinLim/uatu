@@ -87,6 +87,7 @@ jobs:
               writer = csv.DictWriter(
                   output,
                   fieldnames=['index', 'expected', 'hash', 'url'],
+                  lineterminator='\n',
               )
               writer.writeheader()
               for index, row in enumerate(selected):
@@ -157,6 +158,7 @@ jobs:
           printf 'index,expected,release_result,sanitizer_status\n' > logs/results.csv
           while IFS=, read -r index expected hash url; do
             if [[ "$index" == index ]]; then continue; fi
+            url=${url%$'\r'}
             curl -fL --retry 8 --retry-delay 5 "$url" -o work/input.cnf.xz
             xz -t work/input.cnf.xz
             xz -dc work/input.cnf.xz > work/input.cnf
