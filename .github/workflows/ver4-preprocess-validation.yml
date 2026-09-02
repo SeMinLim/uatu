@@ -26,8 +26,21 @@ jobs:
           cat .validation/ver4-preprocess/random-validate-py/part* | base64 -d > /tmp/random_validate.py
           echo 'a201af68521402637f1b598e937b4185184844e020680d3f82a76e7e18b9d1f8  /tmp/materialize_ver4.py' | sha256sum -c -
           echo '94431629c4ed63f58979348884cca38c81eccfe5e8177d6e9fc32c85efc23dd0  /tmp/random_validate.py' | sha256sum -c -
-          sed -i 's/\[\[-1, 4\], \[-4\]\]/[[-1, 4], [-2, -4]]/' /tmp/random_validate.py
-          sed -i 's/\[\[-2, 4\], \[-4\]\]/[[-2, 4], [-3, -4]]/' /tmp/random_validate.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/random_validate.py')
+          text = path.read_text()
+          old_subsumption = '(4, [[1, 2], [1, 2, 3], [-1, 4], [-4]], "subsumption"),'
+          new_subsumption = '(4, [[1, 2], [1, 2, 3], [-1, 4], [-2, -4]], "subsumption"),'
+          old_strengthening = '(4, [[1, 2], [-1, 2, 3], [-2, 4], [-4]], "strengthening"),'
+          new_strengthening = '(4, [[1, 2], [-1, 2, 3], [-2, 4], [-3, -4]], "strengthening"),'
+          if old_subsumption not in text or old_strengthening not in text:
+              raise SystemExit('targeted validation patch point not found')
+          text = text.replace(old_subsumption, new_subsumption, 1)
+          text = text.replace(old_strengthening, new_strengthening, 1)
+          path.write_text(text)
+          PY
           python3 -m py_compile /tmp/materialize_ver4.py /tmp/random_validate.py
 
       - name: Materialize and build Ver4
