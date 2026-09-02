@@ -1,0 +1,49 @@
+name: Publish validated Uatu Ver4 preprocessing
+
+on:
+  push:
+    branches:
+      - temp/ver4-preprocess-validation
+    paths:
+      - .github/workflows/publish-ver4-preprocessing.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize and verify validated source
+        run: |
+          set -euo pipefail
+          cat .validation/ver4-preprocess/materialize-py/part* | base64 -d > /tmp/materialize_ver4.py
+          python3 -m py_compile /tmp/materialize_ver4.py
+          python3 /tmp/materialize_ver4.py
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 debug \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 clean
+          mkdir -p /tmp/uatu-publish/cpu
+          cp README.md /tmp/uatu-publish/README.md
+          cp -a cpu/ver_4 /tmp/uatu-publish/cpu/ver_4
+
+      - name: Publish one clean commit to main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B publish-ver4 origin/main
+          rm -rf cpu/ver_4
+          cp /tmp/uatu-publish/README.md README.md
+          cp -a /tmp/uatu-publish/cpu/ver_4 cpu/ver_4
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add README.md cpu/ver_4
+          git commit -m 'add corrected Ver4 preprocessing solver'
+          git push origin HEAD:main
