@@ -6,6 +6,7 @@ on:
       - temp/ver4-preprocess-validation
     paths:
       - .github/workflows/ver4-preprocess-validation.yml
+      - .validation/ver4-preprocess/**
   workflow_dispatch:
 
 permissions:
@@ -87,7 +88,6 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/verify_result.py <<'PY'
-          import csv
           import sys
           from pathlib import Path
 
