@@ -1,0 +1,32 @@
+[
+  {
+    "index": "0",
+    "expected": "sat",
+    "solver": "ver4",
+    "result": "error",
+    "correct": "0",
+    "model_valid": "1",
+    "wall_sec": "163.98",
+    "user_sec": "54.92",
+    "sys_sec": "18.70",
+    "rss_kb": "13223664",
+    "exit_code": "134",
+    "hash": "00fd8ac9acd186a7a78a2c4d92f90de1",
+    "url": "https://benchmark-database.de/file/00fd8ac9acd186a7a78a2c4d92f90de1?context=cnf"
+  },
+  {
+    "index": "69",
+    "expected": "sat",
+    "solver": "ver4",
+    "result": "error",
+    "correct": "0",
+    "model_valid": "1",
+    "wall_sec": "106.48",
+    "user_sec": "10.10",
+    "sys_sec": "18.83",
+    "rss_kb": "14274264",
+    "exit_code": "134",
+    "hash": "ee5fb3e181571740adb8444bd052dbdc",
+    "url": "https://benchmark-database.de/file/ee5fb3e181571740adb8444bd052dbdc?context=cnf"
+  }
+]
