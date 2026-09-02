@@ -1,0 +1,190 @@
+name: Validate Uatu Ver4 Preprocessing V2
+
+on:
+  push:
+    branches:
+      - temp/ver4-preprocess-validation
+    paths:
+      - .github/workflows/ver4-preprocess-validation-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct source and validation scripts
+        run: |
+          set -euo pipefail
+          cat .validation/ver4-preprocess/materialize-py/part* | base64 -d > /tmp/materialize_ver4.py
+          cat .validation/ver4-preprocess/random-validate-py/part* | base64 -d > /tmp/random_validate.py
+          python3 -m py_compile /tmp/materialize_ver4.py /tmp/random_validate.py
+          python3 /tmp/materialize_ver4.py
+
+      - name: Build release, debug, and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 debug \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DUATU_PROFILE_BCP=0 \
+            cpu/ver_4/solver.cpp cpu/ver_4/preprocess.cpp cpu/ver_4/main.cpp \
+            -o cpu/ver_4/obj/uatu_solver_sanitize
+
+      - name: Validate random small CNFs
+        run: |
+          set -euo pipefail
+          python3 /tmp/random_validate.py \
+            cpu/ver_4/obj/uatu_solver \
+            cpu/ver_4/obj/uatu_solver_sanitize \
+            1000
+
+      - name: Select ten SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          mkdir -p work logs
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/ca707ee406a86700661533deb98bb2ebab079469/evaluation/ver5_vs_minisat_100_manifest.csv \
+            -o work/source.csv
+          python3 - <<'PY'
+          import csv
+          import random
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('work/source.csv').open(newline='')))
+          sat = [row for row in rows if row['expected'] == 'sat']
+          unsat = [row for row in rows if row['expected'] == 'unsat']
+          random.seed(20260902)
+          selected = random.sample(sat, 5) + random.sample(unsat, 5)
+          random.shuffle(selected)
+          with Path('work/selected.csv').open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=['index', 'expected', 'hash', 'url'])
+              writer.writeheader()
+              for index, row in enumerate(selected):
+                  writer.writerow({
+                      'index': index,
+                      'expected': row['expected'],
+                      'hash': row['hash'],
+                      'url': row['url'],
+                  })
+          print('Selected ten benchmarks: 5 SAT and 5 UNSAT')
+          PY
+
+      - name: Run ten SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          cat > /tmp/verify_result.py <<'PY'
+          import sys
+          from pathlib import Path
+
+          expected, output_path, cnf_path = sys.argv[1:]
+          text = Path(output_path).read_text(errors='replace')
+          lines = {line.strip() for line in text.splitlines()}
+          if 'UNSATISFIABLE' in lines:
+              result = 'unsat'
+          elif 'SATISFIABLE' in lines:
+              result = 'sat'
+          else:
+              result = 'unsolved'
+          if result != 'unsolved' and result != expected:
+              raise SystemExit(f'wrong result: expected {expected}, got {result}')
+
+          if result == 'sat':
+              model = None
+              for line in text.splitlines():
+                  fields = line.strip().split()
+                  if not fields or fields[-1] != '0':
+                      continue
+                  try:
+                      values = [int(field) for field in fields]
+                  except ValueError:
+                      continue
+                  if len(values) > 1:
+                      model = values[:-1]
+              if model is None:
+                  raise SystemExit('SAT result did not contain a model')
+              assignment = {abs(literal): literal > 0 for literal in model}
+              clause = []
+              with Path(cnf_path).open(errors='replace') as source:
+                  for line in source:
+                      stripped = line.strip()
+                      if not stripped or stripped[0] in 'cp%':
+                          continue
+                      for token in stripped.split():
+                          literal = int(token)
+                          if literal == 0:
+                              if not any(
+                                  assignment.get(abs(item), False) == (item > 0)
+                                  for item in clause
+                              ):
+                                  raise SystemExit('model falsifies an original clause')
+                              clause.clear()
+                          else:
+                              clause.append(literal)
+              if clause:
+                  raise SystemExit('unterminated clause')
+          print(result)
+          PY
+
+          printf 'index,expected,release_result,sanitizer_status\n' > logs/results.csv
+          while IFS=, read -r index expected hash url; do
+            if [[ "$index" == index ]]; then continue; fi
+            curl -fL --retry 8 --retry-delay 5 "$url" -o work/input.cnf.xz
+            xz -t work/input.cnf.xz
+            xz -dc work/input.cnf.xz > work/input.cnf
+
+            set +e
+            UATU_PRINT_MODEL=1 UATU_TIMEOUT_SEC=30 \
+              timeout --signal=TERM --kill-after=5s 45s \
+              cpu/ver_4/obj/uatu_solver work/input.cnf \
+              > "logs/release-${index}.log" 2>&1
+            release_rc=$?
+            set -e
+            case "$release_rc" in 0|10|20|124|137|143) ;; *) cat "logs/release-${index}.log"; exit 1 ;; esac
+            if grep -Eq 'Segmentation fault|Illegal instruction|internal error:' "logs/release-${index}.log"; then
+              cat "logs/release-${index}.log"
+              exit 1
+            fi
+            release_result=$(python3 /tmp/verify_result.py \
+              "$expected" "logs/release-${index}.log" work/input.cnf)
+
+            set +e
+            ASAN_OPTIONS='detect_leaks=0:halt_on_error=1:abort_on_error=1' \
+            UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' \
+            UATU_TIMEOUT_SEC=10 \
+              timeout --signal=TERM --kill-after=5s 20s \
+              cpu/ver_4/obj/uatu_solver_sanitize work/input.cnf \
+              > "logs/sanitize-${index}.log" 2>&1
+            sanitize_rc=$?
+            set -e
+            case "$sanitize_rc" in 0|10|20|124|137|143) ;; *) cat "logs/sanitize-${index}.log"; exit 1 ;; esac
+            if grep -Eq 'AddressSanitizer|runtime error:|Segmentation fault|Illegal instruction|internal error:' "logs/sanitize-${index}.log"; then
+              cat "logs/sanitize-${index}.log"
+              exit 1
+            fi
+
+            printf '%s,%s,%s,clean\n' "$index" "$expected" "$release_result" >> logs/results.csv
+          done < work/selected.csv
+          test "$(($(wc -l < logs/results.csv) - 1))" -eq 10
+          cat logs/results.csv
+
+      - name: Commit clean validated source to temporary branch
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git rm -r .validation .github
+          git add README.md cpu/ver_4
+          git commit -m 'materialize validated Ver4 preprocessing solver'
+          git push origin HEAD:temp/ver4-preprocess-validation
