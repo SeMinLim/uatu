@@ -1,0 +1,23 @@
+name: Snapshot Uatu Ver4 Source
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-fix
+    paths:
+      - .github/workflows/ver4-source-snapshot.yml
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uatu-ver4-source
+          path: cpu/ver_4
+          if-no-files-found: error
+          retention-days: 1
