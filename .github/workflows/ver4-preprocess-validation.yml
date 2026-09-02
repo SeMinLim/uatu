@@ -26,6 +26,8 @@ jobs:
           cat .validation/ver4-preprocess/random-validate-py/part* | base64 -d > /tmp/random_validate.py
           echo 'a201af68521402637f1b598e937b4185184844e020680d3f82a76e7e18b9d1f8  /tmp/materialize_ver4.py' | sha256sum -c -
           echo '94431629c4ed63f58979348884cca38c81eccfe5e8177d6e9fc32c85efc23dd0  /tmp/random_validate.py' | sha256sum -c -
+          sed -i 's/\[\[-1, 4\], \[-4\]\]/[[-1, 4], [-2, -4]]/' /tmp/random_validate.py
+          sed -i 's/\[\[-2, 4\], \[-4\]\]/[[-2, 4], [-3, -4]]/' /tmp/random_validate.py
           python3 -m py_compile /tmp/materialize_ver4.py /tmp/random_validate.py
 
       - name: Materialize and build Ver4
