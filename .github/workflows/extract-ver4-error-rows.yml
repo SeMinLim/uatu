@@ -1,0 +1,55 @@
+name: Extract Ver4 error rows
+
+on:
+  push:
+    branches:
+      - temp/ver4-preprocessing-vs-minisat-100
+    paths:
+      - .github/workflows/extract-ver4-error-rows.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-preprocessing-vs-minisat-100
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-preprocessing-vs-minisat-summary
+          path: summary
+          github-token: ${{ github.token }}
+          repository: SeMinLim/uatu
+          run-id: 33621164176
+
+      - name: Extract error rows
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostics
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('summary/ver4_raw.csv').open(newline='')))
+          errors = [row for row in rows if row['result'] == 'error']
+          Path('diagnostics/ver4_error_rows.json').write_text(
+              json.dumps(errors, indent=2) + '\n'
+          )
+          print(json.dumps(errors, indent=2))
+          PY
+
+      - name: Publish diagnostics
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add diagnostics/ver4_error_rows.json
+          git commit -m 'diag: record Ver4 evaluation error rows'
+          git push origin HEAD:temp/ver4-preprocessing-vs-minisat-100
