@@ -106,10 +106,15 @@ void Solver::initialize( void ) {
         reduce_limit = 8192;
 
         vsids.initialize(activity);
+        value[0] = local_best[0] = saved[0] = 0;
+        reason[0] = -1;
+        level[0] = mark[0] = 0;
         lbdMark[0] = 0;
+        activity[0] = 0.0;
         for ( int i = 1; i <= vars; i ++ ) {
                 value[i] = local_best[i] = saved[i] = 0;
-                reason[i] = level[i] = mark[i] = 0;
+                reason[i] = -1;
+                level[i] = mark[i] = 0;
                 lbdMark[i] = 0;
                 activity[i] = 0.0;
                 vsids.insert(i);
@@ -387,8 +392,12 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         ++time_stamp;
         learnt.clear();
 
-        // Preserve the original solver's conflict-level convention.
-        const int conflictLevel = level[abs(clauseDB[conflict][0])];
+        if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
+                fprintf( stderr, "internal error: invalid conflict clause\n" );
+                return 30;
+        }
+
+        const int conflictLevel = static_cast<int>(decVarInTrail.size());
         if ( conflictLevel == 0 ) return 20;
 
         learnt.push_back(0);
@@ -399,6 +408,11 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         bump.reserve(32);
 
         do {
+                if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
+                        fprintf( stderr, "internal error: invalid reason clause\n" );
+                        return 30;
+                }
+
                 updateClauseQuality(conflict);
                 Clause &clause = clauseDB[conflict];
                 const int begin = resolveLiteral == 0 ? 0 : 1;
@@ -410,21 +424,30 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         bump.push_back(variable);
                         mark[variable] = time_stamp;
 
-                        if ( level[variable] >= conflictLevel ) ++unresolved;
+                        if ( level[variable] == conflictLevel ) ++unresolved;
                         else learnt.push_back(clause[i]);
                 }
 
                 while ( trailIndex >= 0 &&
                         mark[abs(trail[trailIndex])] != time_stamp ) --trailIndex;
                 if ( trailIndex < 0 ) {
-                        fprintf(stderr, "internal error: malformed implication graph\n");
-                        abort();
+                        fprintf( stderr, "internal error: malformed implication graph\n" );
+                        return 30;
                 }
 
-                resolveLiteral = trail[trailIndex--];
-                conflict = reason[abs(resolveLiteral)];
+                resolveLiteral = trail[trailIndex --];
                 mark[abs(resolveLiteral)] = 0;
                 --unresolved;
+
+                if ( unresolved > 0 ) {
+                        const int nextReason = reason[abs(resolveLiteral)];
+                        if ( nextReason < 0 ||
+                             nextReason >= static_cast<int>(clauseDB.size()) ) {
+                                fprintf( stderr, "internal error: invalid reason clause\n" );
+                                return 30;
+                        }
+                        conflict = nextReason;
+                }
         } while ( unresolved > 0 );
 
         learnt[0] = -resolveLiteral;
@@ -440,7 +463,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         const int literal = learnt[i];
                         const int variable = abs(literal);
                         const int reasonClause = reason[variable];
-                        bool removable = reasonClause >= 0;
+                        bool removable = reasonClause >= 0 &&
+                                reasonClause < static_cast<int>(clauseDB.size());
 
                         if ( removable ) {
                                 const Clause &reasonData = clauseDB[reasonClause];
@@ -455,7 +479,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         }
 
                         if ( removable ) ++minimizedLiterals;
-                        else learnt[out++] = literal;
+                        else learnt[out ++] = literal;
                 }
                 learnt.resize(out);
         }
@@ -472,7 +496,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
         if ( lbd_queue_size < 50 ) ++lbd_queue_size;
         else fast_lbd_sum -= lbd_queue[lbd_queue_pos];
-        lbd_queue[lbd_queue_pos++] = lbd;
+        lbd_queue[lbd_queue_pos ++] = lbd;
         if ( lbd_queue_pos == 50 ) lbd_queue_pos = 0;
         fast_lbd_sum += lbd;
         slow_lbd_sum += lbd > 50 ? 50 : lbd;
@@ -482,7 +506,9 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         } else {
                 int maxIndex = 1;
                 for ( int i = 2; i < static_cast<int>(learnt.size()); i ++ ) {
-                        if ( level[abs(learnt[i])] > level[abs(learnt[maxIndex])] ) maxIndex = i;
+                        if ( level[abs(learnt[i])] > level[abs(learnt[maxIndex])] ) {
+                                maxIndex = i;
+                        }
                 }
                 std::swap(learnt[1], learnt[maxIndex]);
                 backtrackLevel = level[abs(learnt[1])];
@@ -498,26 +524,23 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
 // Backtracking
 void Solver::backtrack( int backtrackLevel ) {
-    	if ( (int)decVarInTrail.size() <= backtrackLevel ) {
-		return;
-	} else {
-		for ( int i = trail.size() - 1; i >= decVarInTrail[backtrackLevel]; i -- ) {
-			// Delete assignment
-			int v = abs(trail[i]);
-			value[v] = 0;
+        if ( static_cast<int>(decVarInTrail.size()) <= backtrackLevel ) return;
 
-			// Phase saving
-			saved[v] = trail[i] > 0 ? 1 : -1;
-			
-			// Store variable back to VSIDS heap
-			if ( !vsids.inHeap(v) ) vsids.insert(v);
-		}
+        const int trailLimit = decVarInTrail[backtrackLevel];
+        for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
+                const int variable = abs(trail[i]);
 
-		// Parameter and array update
-		propagated = decVarInTrail[backtrackLevel];
-		trail.resize(propagated);
-		decVarInTrail.resize(backtrackLevel);
-	}
+                saved[variable] = trail[i] > 0 ? 1 : -1;
+                value[variable] = 0;
+                reason[variable] = -1;
+                level[variable] = 0;
+
+                if ( !vsids.inHeap(variable) ) vsids.insert(variable);
+        }
+
+        propagated = trailLimit;
+        trail.resize(propagated);
+        decVarInTrail.resize(backtrackLevel);
 }
 
 // Reset recent LBD statistics
@@ -649,7 +672,7 @@ int Solver::solve() {
                         int backtrackLevel = 0;
                         int lbd = 0;
                         result = analyze(conflictClause, backtrackLevel, lbd);
-                        if ( result == 20 ) break;
+                        if ( result != 0 ) break;
 
                         backtrack(backtrackLevel);
                         if ( learnt.size() == 1 ) {
