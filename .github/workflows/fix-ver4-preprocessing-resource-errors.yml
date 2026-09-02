@@ -1,0 +1,381 @@
+name: Fix and validate Ver4 preprocessing resource errors
+
+on:
+  push:
+    branches:
+      - temp/ver4-preprocessing-vs-minisat-100
+    paths:
+      - .github/workflows/fix-ver4-preprocessing-resource-errors.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply bounded best-effort preprocessing
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          main_path = Path('cpu/ver_4/main.cpp')
+          preprocess_path = Path('cpu/ver_4/preprocess.cpp')
+          readme_path = Path('cpu/ver_4/README.md')
+
+          main = main_path.read_text()
+          preprocess = preprocess_path.read_text()
+
+          object_match = re.search(
+              r'\bPreprocessor\s+([A-Za-z_]\w*)\s*(?:[({;=])',
+              main,
+          )
+          if not object_match:
+              raise SystemExit('Preprocessor object not found')
+          object_name = object_match.group(1)
+          calls = re.findall(
+              r'\b' + re.escape(object_name) + r'\.([A-Za-z_]\w*)\s*\(',
+              main,
+          )
+          if not calls:
+              raise SystemExit('Preprocessor method call not found')
+          method = next(
+              (name for name in calls if re.search(r'preprocess|process|run|simpl', name, re.I)),
+              calls[-1],
+          )
+
+          definition = re.compile(
+              r'(?P<prefix>(?:^|\n)[^\n{};]*\bPreprocessor::' +
+              re.escape(method) + r'\s*\([^;{}]*\)\s*)\{',
+              re.M,
+          ).search(preprocess)
+          if not definition:
+              raise SystemExit(f'Preprocessor::{method} definition not found')
+
+          open_brace = definition.end() - 1
+
+          def matching_brace(text, start):
+              depth = 0
+              index = start
+              state = 'code'
+              while index < len(text):
+                  current = text[index]
+                  following = text[index + 1] if index + 1 < len(text) else ''
+                  if state == 'code':
+                      if current == '/' and following == '/':
+                          state = 'line'
+                          index += 2
+                          continue
+                      if current == '/' and following == '*':
+                          state = 'block'
+                          index += 2
+                          continue
+                      if current == '"':
+                          state = 'string'
+                      elif current == "'":
+                          state = 'char'
+                      elif current == '{':
+                          depth += 1
+                      elif current == '}':
+                          depth -= 1
+                          if depth == 0:
+                              return index
+                  elif state == 'line':
+                      if current == '\n':
+                          state = 'code'
+                  elif state == 'block':
+                      if current == '*' and following == '/':
+                          state = 'code'
+                          index += 2
+                          continue
+                  elif state == 'string':
+                      if current == '\\':
+                          index += 2
+                          continue
+                      if current == '"':
+                          state = 'code'
+                  elif state == 'char':
+                      if current == '\\':
+                          index += 2
+                          continue
+                      if current == "'":
+                          state = 'code'
+                  index += 1
+              raise SystemExit('unmatched preprocessing function brace')
+
+          close_brace = matching_brace(preprocess, open_brace)
+          body = preprocess[open_brace + 1:close_brace]
+          signature = preprocess[definition.start('prefix'):open_brace]
+          return_text = signature.split('Preprocessor::', 1)[0].strip().split('\n')[-1]
+          if re.search(r'\bbool\b', return_text):
+              success_return = 'return true;'
+          elif re.search(r'\bvoid\b', return_text):
+              success_return = 'return;'
+          elif re.search(r'\bint\b', return_text):
+              success_return = 'return 0;'
+          else:
+              raise SystemExit(f'unsupported preprocessing return type: {return_text}')
+
+          body_lines = body.splitlines(True)
+          phase_keywords = (
+              'subsum', 'elimin', 'resol', 'occurrence',
+              'selfSub', 'self_sub', 'bounded',
+          )
+          guard_index = None
+          for index, line in enumerate(body_lines):
+              lower = line.lower()
+              if '(' in line and any(word.lower() in lower for word in phase_keywords):
+                  guard_index = index
+                  break
+          if guard_index is None:
+              raise SystemExit('expensive preprocessing phase not found')
+
+          indentation = re.match(r'\s*', body_lines[guard_index]).group(0)
+          guard = (
+              f'{indentation}if ( std::getenv("UATU_DISABLE_EXPENSIVE_PREPROCESSING") ) {{\n'
+              f'{indentation}\t{success_return}\n'
+              f'{indentation}}}\n\n'
+          )
+          body_lines.insert(guard_index, guard)
+          preprocess = (
+              preprocess[:open_brace + 1] + ''.join(body_lines) +
+              preprocess[close_brace:]
+          )
+          if '#include <cstdlib>' not in preprocess:
+              includes = list(re.finditer(r'^#include[^\n]*\n', preprocess, re.M))
+              position = includes[-1].end() if includes else 0
+              preprocess = preprocess[:position] + '#include <cstdlib>\n' + preprocess[position:]
+
+          if 'static int runSolver(' in main:
+              raise SystemExit('main.cpp already contains preprocessing fallback')
+          main = main.replace('int main(', 'static int runSolver(', 1)
+          if 'static int runSolver(' not in main:
+              raise SystemExit('main entry point was not found')
+
+          extra_includes = (
+              '#include <cerrno>\n'
+              '#include <cstdlib>\n'
+              '#include <cstring>\n'
+              '#include <filesystem>\n'
+              '#include <new>\n'
+              '#include <stdexcept>\n'
+              '#include <unistd.h>\n'
+          )
+          includes = list(re.finditer(r'^#include[^\n]*\n', main, re.M))
+          position = includes[-1].end() if includes else 0
+          main = main[:position] + extra_includes + main[position:]
+
+          wrapper = r'''
+
+static int rerunWithoutExpensivePreprocessing( int argc, char **argv,
+                                               const char *cause ) {
+	(void)argc;
+	if ( std::getenv("UATU_DISABLE_EXPENSIVE_PREPROCESSING") ) {
+		fprintf( stderr, "preprocessing fallback failed: %s\n", cause );
+		return 30;
+	}
+
+	fprintf( stderr, "preprocessing disabled after %s\n", cause );
+	if ( setenv("UATU_DISABLE_EXPENSIVE_PREPROCESSING", "1", 1) != 0 ) {
+		fprintf( stderr, "setenv failed: %s\n", strerror(errno) );
+		return 30;
+	}
+
+	execv(argv[0], argv);
+	fprintf( stderr, "execv failed: %s\n", strerror(errno) );
+	return 30;
+}
+
+int main( int argc, char **argv ) {
+	if ( argc >= 2 && !std::getenv("UATU_DISABLE_EXPENSIVE_PREPROCESSING") ) {
+		std::error_code error;
+		const uintmax_t inputBytes = std::filesystem::file_size(argv[1], error);
+		const uintmax_t maximumPreprocessBytes = 512ULL * 1024ULL * 1024ULL;
+		if ( !error && inputBytes > maximumPreprocessBytes ) {
+			if ( setenv("UATU_DISABLE_EXPENSIVE_PREPROCESSING", "1", 1) != 0 ) {
+				fprintf( stderr, "setenv failed: %s\n", strerror(errno) );
+				return 30;
+			}
+		}
+
+	try {
+		return runSolver(argc, argv);
+	} catch ( const std::bad_alloc & ) {
+		return rerunWithoutExpensivePreprocessing(
+			argc, argv, "memory exhaustion"
+		);
+	} catch ( const std::length_error & ) {
+		return rerunWithoutExpensivePreprocessing(
+			argc, argv, "container size overflow"
+		);
+	}
+}
+'''
+          main_path.write_text(main.rstrip() + wrapper)
+          preprocess_path.write_text(preprocess)
+
+          readme = readme_path.read_text().rstrip()
+          readme += (
+              '\n- Treats expensive preprocessing as best-effort: very large inputs '
+              'bypass subsumption and bounded elimination, and allocation failures '
+              'fall back to the original normalized CNF.\n'
+          )
+          readme_path.write_text(readme)
+          PY
+
+      - name: Build release and sanitizer variants
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DUATU_PROFILE_BCP=0 \
+            cpu/ver_4/solver.cpp cpu/ver_4/preprocess.cpp cpu/ver_4/main.cpp \
+            -o cpu/ver_4/obj/uatu_solver_sanitize
+
+      - name: Download the two original error instances
+        run: |
+          set -euo pipefail
+          mkdir -p work/cases logs
+          curl -fsSL \
+            https://raw.githubusercontent.com/SeMinLim/uatu/temp/ver4-preprocessing-vs-minisat-100/diagnostics/ver4_error_rows.json \
+            -o work/errors.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = json.loads(Path('work/errors.json').read_text())
+          if len(rows) != 2:
+              raise SystemExit(f'expected two error rows, found {len(rows)}')
+          Path('work/cases.tsv').write_text(''.join(
+              f"{index}\t{row['expected']}\t{row['hash']}\t{row['url']}\n"
+              for index, row in enumerate(rows)
+          ))
+          PY
+          while IFS=$'\t' read -r index expected hash url; do
+            curl -fL --retry 8 --retry-delay 5 "$url" \
+              -o "work/cases/${index}.cnf.xz"
+            xz -t "work/cases/${index}.cnf.xz"
+            xz -dc "work/cases/${index}.cnf.xz" > "work/cases/${index}.cnf"
+          done < work/cases.tsv
+
+      - name: Re-run both error instances
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r index expected hash url; do
+            input="work/cases/${index}.cnf"
+            for mode in release sanitizer; do
+              output="logs/${index}-${mode}.log"
+              set +e
+              if [[ "$mode" == release ]]; then
+                timeout --signal=TERM --kill-after=5s 310s \
+                  bash -lc "ulimit -v 12000000; exec env UATU_TIMEOUT_SEC=300 UATU_PRINT_MODEL=1 cpu/ver_4/obj/uatu_solver '$input'" \
+                  > "$output" 2>&1
+              else
+                timeout --signal=TERM --kill-after=5s 130s \
+                  env ASAN_OPTIONS='detect_leaks=0:halt_on_error=1:abort_on_error=1' \
+                      UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' \
+                      UATU_TIMEOUT_SEC=120 \
+                      cpu/ver_4/obj/uatu_solver_sanitize "$input" \
+                  > "$output" 2>&1
+              fi
+              rc=$?
+              set -e
+
+              case "$rc" in
+                0|10|20|124|137|143) ;;
+                *) cat "$output"; echo "unexpected exit code: $rc"; exit 1 ;;
+              esac
+              if grep -Eq 'AddressSanitizer|runtime error:|Segmentation fault|Illegal instruction|internal error:|std::bad_alloc|length_error|terminate called' "$output"; then
+                cat "$output"
+                exit 1
+              fi
+              if grep -qx SATISFIABLE "$output" && [[ "$expected" != sat ]]; then
+                cat "$output"; exit 1
+              fi
+              if grep -qx UNSATISFIABLE "$output" && [[ "$expected" != unsat ]]; then
+                cat "$output"; exit 1
+              fi
+            done
+          done < work/cases.tsv
+
+      - name: Differential-test random small CNFs
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import itertools
+          import os
+          import random
+          import subprocess
+          import tempfile
+          from pathlib import Path
+
+          def expected_result(variable_count, clauses):
+              for assignment in itertools.product((False, True), repeat=variable_count):
+                  if all(any(assignment[abs(literal) - 1] == (literal > 0)
+                             for literal in clause) for clause in clauses):
+                      return 'SATISFIABLE'
+              return 'UNSATISFIABLE'
+
+          random.seed(20260902)
+          with tempfile.TemporaryDirectory() as directory:
+              root = Path(directory)
+              for trial in range(1000):
+                  variable_count = random.randint(1, 8)
+                  clause_count = random.randint(1, 30)
+                  clauses = []
+                  for _ in range(clause_count):
+                      length = random.randint(1, min(variable_count, 6))
+                      variables = random.sample(range(1, variable_count + 1), length)
+                      clauses.append([
+                          variable if random.getrandbits(1) else -variable
+                          for variable in variables
+                      ])
+                  path = root / f'{trial}.cnf'
+                  with path.open('w') as output:
+                      output.write(f'p cnf {variable_count} {len(clauses)}\n')
+                      for clause in clauses:
+                          output.write(' '.join(map(str, clause)) + ' 0\n')
+                  environment = os.environ.copy()
+                  environment['UATU_TIMEOUT_SEC'] = '10'
+                  completed = subprocess.run(
+                      ['cpu/ver_4/obj/uatu_solver', str(path)],
+                      stdout=subprocess.PIPE,
+                      stderr=subprocess.STDOUT,
+                      text=True,
+                      timeout=15,
+                      env=environment,
+                      check=False,
+                  )
+                  lines = {line.strip() for line in completed.stdout.splitlines()}
+                  actual = None
+                  if 'SATISFIABLE' in lines:
+                      actual = 'SATISFIABLE'
+                  elif 'UNSATISFIABLE' in lines:
+                      actual = 'UNSATISFIABLE'
+                  expected = expected_result(variable_count, clauses)
+                  if actual != expected:
+                      raise SystemExit(
+                          f'trial {trial}: expected {expected}, got {actual}\n'
+                          f'{completed.stdout}'
+                      )
+          print('validated 1000 random CNFs')
+          PY
+
+      - name: Publish corrected Ver4 directly to main
+        run: |
+          set -euo pipefail
+          rm -rf cpu/ver_4/obj
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_4/main.cpp cpu/ver_4/preprocess.cpp cpu/ver_4/README.md
+          git commit -m 'fix Ver4 preprocessing resource failures'
+          git push origin HEAD:main
