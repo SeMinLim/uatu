@@ -1,0 +1,49 @@
+name: Inspect Ver4 Error Inputs
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-fix
+    paths:
+      - .github/workflows/ver4-error-input-analysis.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - index: 0
+            hash: 00fd8ac9acd186a7a78a2c4d92f90de1
+          - index: 69
+            hash: ee5fb3e181571740adb8444bd052dbdc
+    steps:
+      - name: Download and inspect benchmark
+        env:
+          INDEX: ${{ matrix.index }}
+          HASH: ${{ matrix.hash }}
+        run: |
+          set -euo pipefail
+          mkdir -p report work
+          curl -fL --retry 8 --retry-delay 5 \
+              "https://benchmark-database.de/file/${HASH}?context=cnf" \
+              -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+          {
+              printf 'index=%s\n' "$INDEX"
+              printf 'hash=%s\n' "$HASH"
+              printf 'compressed_bytes=%s\n' "$(stat -c '%s' work/instance.cnf.xz)"
+              printf 'uncompressed_bytes=%s\n' "$(stat -c '%s' work/instance.cnf)"
+              grep -m1 '^p cnf ' work/instance.cnf
+          } | tee "report/input-${INDEX}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-error-input-${{ matrix.index }}
+          path: report
+          if-no-files-found: error
+          retention-days: 1
