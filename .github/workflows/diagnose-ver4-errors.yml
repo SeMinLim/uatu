@@ -1,0 +1,60 @@
+name: Diagnose Ver4 Evaluation Errors
+
+on:
+  push:
+    branches:
+      - temp/ver4-preprocessing-vs-minisat-100
+    paths:
+      - .github/workflows/diagnose-ver4-errors.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-preprocessing-vs-minisat-100
+          fetch-depth: 0
+
+      - name: Download and extract aggregate artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/summary diagnostics
+          gh api repos/${GITHUB_REPOSITORY}/actions/artifacts/9845222749/zip > /tmp/summary.zip
+          unzip -q /tmp/summary.zip -d /tmp/summary
+          find /tmp/summary -maxdepth 2 -type f -print
+
+      - name: Extract error rows
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          candidates = list(Path('/tmp/summary').rglob('ver4_raw.csv'))
+          if len(candidates) != 1:
+              raise SystemExit(f'expected one ver4_raw.csv, found {len(candidates)}')
+
+          rows = list(csv.DictReader(candidates[0].open(newline='')))
+          errors = [row for row in rows if row['result'] == 'error']
+          Path('diagnostics/ver4_error_rows.json').write_text(
+              json.dumps(errors, indent=2) + '\n'
+          )
+          print(json.dumps(errors, indent=2))
+          PY
+
+      - name: Commit diagnostics to temporary branch
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add diagnostics/ver4_error_rows.json
+          git commit -m 'diagnose Ver4 evaluation errors'
+          git push origin HEAD:temp/ver4-preprocessing-vs-minisat-100
