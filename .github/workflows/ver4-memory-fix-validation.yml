@@ -1,0 +1,386 @@
+name: Validate Uatu Ver4 Memory Fix
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-fix
+    paths:
+      - .github/workflows/ver4-memory-fix-validation.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  validate-source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply the memory-safety fix
+        run: |
+          set -euo pipefail
+          cat .validation/ver4-error-fix/patch/part* | base64 -d > /tmp/ver4-memory-fix.patch
+          echo 'e2594272c12262cb91493e58cb809e4ffc981011aa3354570c6b785e880590c0  /tmp/ver4-memory-fix.patch' | sha256sum -c -
+          git apply --check /tmp/ver4-memory-fix.patch
+          git apply /tmp/ver4-memory-fix.patch
+
+      - name: Build release and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+              -fsanitize=address,undefined -fno-omit-frame-pointer \
+              -DUATU_PROFILE_BCP=0 \
+              cpu/ver_4/solver.cpp cpu/ver_4/preprocess.cpp cpu/ver_4/main.cpp \
+              -o cpu/ver_4/obj/uatu_solver_sanitize
+
+      - name: Validate result and allocation-failure paths
+        run: |
+          set -euo pipefail
+          cat > /tmp/sat.cnf <<'EOF'
+          p cnf 3 3
+          1 2 0
+          -1 3 0
+          -2 3 0
+          EOF
+          cat > /tmp/unsat.cnf <<'EOF'
+          p cnf 1 2
+          1 0
+          -1 0
+          EOF
+
+          for auxiliary in 1024 0; do
+              UATU_PREPROCESS_AUX_MB="$auxiliary" UATU_PRINT_MODEL=1 \
+                  cpu/ver_4/obj/uatu_solver /tmp/sat.cnf > /tmp/sat.out || test $? -eq 10
+              grep -qx 'SATISFIABLE' /tmp/sat.out
+              UATU_PREPROCESS_AUX_MB="$auxiliary" \
+                  cpu/ver_4/obj/uatu_solver /tmp/unsat.cnf > /tmp/unsat.out || test $? -eq 20
+              grep -qx 'UNSATISFIABLE' /tmp/unsat.out
+
+              ASAN_OPTIONS='detect_leaks=0:halt_on_error=1:abort_on_error=1' \
+              UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' \
+              UATU_PREPROCESS_AUX_MB="$auxiliary" \
+                  cpu/ver_4/obj/uatu_solver_sanitize /tmp/sat.cnf > /tmp/sanitize.out || test $? -eq 10
+              if grep -Eq 'AddressSanitizer|runtime error:' /tmp/sanitize.out; then
+                  cat /tmp/sanitize.out
+                  exit 1
+              fi
+          done
+
+          printf 'p cnf 10000000 0\n' > /tmp/large-empty.cnf
+          set +e
+          bash -lc 'ulimit -v 200000; exec cpu/ver_4/obj/uatu_solver /tmp/large-empty.cnf' \
+              > /tmp/memory.out 2> /tmp/memory.err
+          rc=$?
+          set -e
+          test "$rc" -eq 0
+          grep -qx 'UNSOLVED' /tmp/memory.out
+          grep -q 'memory limit reached' /tmp/memory.err
+
+  prepare:
+    needs: validate-source
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - name: Prepare the identical fixed-random 100-instance subset
+        id: prepare
+        run: |
+          set -euo pipefail
+          curl -fL --retry 8 --retry-delay 5 \
+              https://raw.githubusercontent.com/SeMinLim/uatu/ca707ee406a86700661533deb98bb2ebab079469/evaluation/ver5_vs_minisat_100_manifest.csv \
+              -o /tmp/manifest.csv
+          python3 - <<'PY'
+          import csv
+          import json
+          import os
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('/tmp/manifest.csv').open(newline='')))
+          if len(rows) != 100 or len({row['hash'] for row in rows}) != 100:
+              raise SystemExit('the evaluation subset must contain 100 unique instances')
+          matrix = [
+              {
+                  'index': int(row['index']),
+                  'expected': row['expected'],
+                  'hash': row['hash'],
+                  'url': row['url'],
+              }
+              for row in rows
+          ]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('matrix=' + json.dumps(matrix, separators=(',', ':')) + '\n')
+          PY
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply and build the corrected Ver4
+        run: |
+          set -euo pipefail
+          cat .validation/ver4-error-fix/patch/part* | base64 -d > /tmp/ver4-memory-fix.patch
+          echo 'e2594272c12262cb91493e58cb809e4ffc981011aa3354570c6b785e880590c0  /tmp/ver4-memory-fix.patch' | sha256sum -c -
+          git apply /tmp/ver4-memory-fix.patch
+          make -C cpu/ver_4 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Download benchmark
+        env:
+          BENCHMARK_URL: ${{ matrix.url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          curl -fL --retry 8 --retry-delay 5 "$BENCHMARK_URL" -o work/instance.cnf.xz
+          xz -t work/instance.cnf.xz
+          xz -dc work/instance.cnf.xz > work/instance.cnf
+
+      - name: Run and classify corrected Ver4
+        env:
+          INDEX: ${{ matrix.index }}
+          EXPECTED: ${{ matrix.expected }}
+          BENCHMARK_HASH: ${{ matrix.hash }}
+          BENCHMARK_URL: ${{ matrix.url }}
+          TIMEOUT_SEC: 1000
+        run: |
+          set -euo pipefail
+          cat > work/verify_model.py <<'PY'
+          import sys
+          from pathlib import Path
+
+          output_path, cnf_path = sys.argv[1:]
+          model = []
+          for line in Path(output_path).read_text(errors='ignore').splitlines():
+              fields = line.split()
+              if not fields or fields[-1] != '0':
+                  continue
+              try:
+                  values = [int(value) for value in fields]
+              except ValueError:
+                  continue
+              if len(values) > 1:
+                  model = values[:-1]
+          assignment = {abs(literal): literal > 0 for literal in model if literal}
+          if not assignment:
+              raise SystemExit(1)
+          clause = []
+          with open(cnf_path, errors='ignore') as source:
+              for line in source:
+                  stripped = line.strip()
+                  if not stripped or stripped[0] in 'cp%':
+                      continue
+                  for token in stripped.split():
+                      literal = int(token)
+                      if literal == 0:
+                          if not any(
+                              assignment.get(abs(item), False) == (item > 0)
+                              for item in clause
+                          ):
+                              raise SystemExit(1)
+                          clause.clear()
+                      else:
+                          clause.append(literal)
+          if clause:
+              raise SystemExit(1)
+          PY
+
+          printf 'index,expected,result,correct,model_valid,wall_sec,rss_kb,exit_code,hash,url\n' \
+              > result/results.csv
+          total_mem_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+          reserve_mem_kb=2097152
+          if (( total_mem_kb > reserve_mem_kb + 1048576 )); then
+              memory_limit_kb=$((total_mem_kb - reserve_mem_kb))
+          else
+              memory_limit_kb=$((total_mem_kb * 70 / 100))
+          fi
+
+          set +e
+          /usr/bin/time -q -f '%e,%M' -o work/timing.csv \
+              timeout --signal=TERM --kill-after=5s "$((TIMEOUT_SEC + 10))s" \
+              bash -lc "ulimit -v ${memory_limit_kb}; exec env UATU_TIMEOUT_SEC=${TIMEOUT_SEC} UATU_PRINT_MODEL=1 cpu/ver_4/obj/uatu_solver work/instance.cnf" \
+              > work/ver4.out 2>&1
+          rc=$?
+          set -e
+
+          result=error
+          if grep -qx 'UNSATISFIABLE' work/ver4.out; then
+              result=unsat
+          elif grep -qx 'SATISFIABLE' work/ver4.out; then
+              result=sat
+          elif grep -qx 'UNSOLVED' work/ver4.out || \
+               [[ $rc -eq 124 || $rc -eq 137 || $rc -eq 143 ]]; then
+              result=timeout
+          fi
+
+          model_valid=1
+          if [[ "$result" == sat ]]; then
+              set +e
+              python3 work/verify_model.py work/ver4.out work/instance.cnf
+              verify_rc=$?
+              set -e
+              if [[ $verify_rc -ne 0 ]]; then model_valid=0; fi
+          fi
+
+          correct=0
+          if [[ "$result" == "$EXPECTED" && $model_valid -eq 1 ]]; then correct=1; fi
+          wall=1010
+          rss=0
+          if [[ -s work/timing.csv ]]; then IFS=',' read -r wall rss < work/timing.csv || true; fi
+          printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+              "$INDEX" "$EXPECTED" "$result" "$correct" "$model_valid" \
+              "$wall" "$rss" "$rc" "$BENCHMARK_HASH" "$BENCHMARK_URL" \
+              >> result/results.csv
+          cat result/results.csv
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-memory-fix-result-${{ matrix.index }}
+          path: result/results.csv
+          if-no-files-found: error
+          retention-days: 2
+
+  aggregate:
+    needs: evaluate
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver4-memory-fix-result-*
+          path: downloaded
+          merge-multiple: false
+
+      - name: Require 100 clean executions
+        run: |
+          set -euo pipefail
+          mkdir -p summary
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          rows = []
+          for path in Path('downloaded').glob('*/results.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+          if len(rows) != 100:
+              raise SystemExit(f'expected 100 rows, found {len(rows)}')
+          if {int(row['index']) for row in rows} != set(range(100)):
+              raise SystemExit('duplicate or missing benchmark indices')
+
+          errors = [row for row in rows if row['result'] == 'error']
+          wrong = [
+              row for row in rows
+              if row['result'] in ('sat', 'unsat') and row['correct'] != '1'
+          ]
+          solved = [row for row in rows if row['correct'] == '1']
+          summary = {
+              'benchmarks': 100,
+              'solved': len(solved),
+              'sat_solved': sum(row['expected'] == 'sat' and row['correct'] == '1' for row in rows),
+              'unsat_solved': sum(row['expected'] == 'unsat' and row['correct'] == '1' for row in rows),
+              'errors': len(errors),
+              'wrong_answers': len(wrong),
+              'former_error_indices': {
+                  index: next(row for row in rows if int(row['index']) == index)
+                  for index in (0, 69)
+              },
+          }
+          Path('summary/decision.json').write_text(json.dumps(summary, indent=2) + '\n')
+          with Path('summary/results.csv').open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader()
+              writer.writerows(sorted(rows, key=lambda row: int(row['index'])))
+          print(json.dumps(summary, indent=2))
+          if errors or wrong:
+              raise SystemExit('corrected Ver4 still has an error or wrong answer')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-memory-fix-summary
+          path: summary
+          if-no-files-found: error
+          retention-days: 2
+
+  publish-blobs:
+    needs: aggregate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize validated source
+        run: |
+          set -euo pipefail
+          cat .validation/ver4-error-fix/patch/part* | base64 -d > /tmp/ver4-memory-fix.patch
+          echo 'e2594272c12262cb91493e58cb809e4ffc981011aa3354570c6b785e880590c0  /tmp/ver4-memory-fix.patch' | sha256sum -c -
+          git apply /tmp/ver4-memory-fix.patch
+          make -C cpu/ver_4 clean all \
+              CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 clean
+
+      - name: Upload validated source as unattached Git blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p blob-output
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          repository = os.environ['GITHUB_REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          paths = [
+              'cpu/ver_4/preprocess.cpp',
+              'cpu/ver_4/solver.cpp',
+              'cpu/ver_4/solver.h',
+              'cpu/ver_4/main.cpp',
+          ]
+          rows = []
+          for path in paths:
+              payload = json.dumps({
+                  'content': Path(path).read_text(),
+                  'encoding': 'utf-8',
+              }).encode()
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{repository}/git/blobs',
+                  data=payload,
+                  method='POST',
+                  headers={
+                      'Accept': 'application/vnd.github+json',
+                      'Authorization': f'Bearer {token}',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              with urllib.request.urlopen(request) as response:
+                  sha = json.load(response)['sha']
+              rows.append((path, sha))
+          with Path('blob-output/blob-shas.csv').open('w') as output:
+              output.write('path,sha\n')
+              for path, sha in rows:
+                  output.write(f'{path},{sha}\n')
+          print(Path('blob-output/blob-shas.csv').read_text())
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-memory-fix-blobs
+          path: blob-output/blob-shas.csv
+          if-no-files-found: error
+          retention-days: 2
