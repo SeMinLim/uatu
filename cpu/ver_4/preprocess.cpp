@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstdio>
 #include <deque>
 #include <set>
 #include <utility>
@@ -13,6 +14,7 @@
 #define PREPROCESS_MAX_BVE_OCCURRENCE 64
 #define PREPROCESS_MAX_BVE_PAIRS 4096
 #define PREPROCESS_MAX_RESOLVENT_LENGTH 20
+#define PREPROCESS_MAX_AUXILIARY_BYTES (512ULL * 1024ULL * 1024ULL)
 
 
 typedef struct ClauseOrder {
@@ -393,7 +395,6 @@ static int eliminateVariables( int variableCount,
 					     positiveClauses.size() + negativeClauses.size() ) {
 						bounded = false;
 						break;
-					}
 				}
 				if ( !bounded ) break;
 			}
@@ -454,6 +455,22 @@ int preprocessFormula( int variableCount,
 	result.generatedResolvents = 0;
 	result.finalClauses = 0;
 	result.finalLiterals = 0;
+
+	const size_t occurrenceHeaders =
+		static_cast<size_t>(variableCount + 1) * 2 *
+		sizeof(std::vector<int>);
+	const size_t formulaHeaders =
+		formula.capacity() * sizeof(std::vector<int>);
+	if ( occurrenceHeaders > PREPROCESS_MAX_AUXILIARY_BYTES ||
+	     formulaHeaders > PREPROCESS_MAX_AUXILIARY_BYTES -
+		occurrenceHeaders ) {
+		fprintf( stderr, "preprocessing skipped for large formula\n" );
+		result.finalClauses = static_cast<long long>(formula.size());
+		for ( const std::vector<int> &clause : formula ) {
+			result.finalLiterals += static_cast<long long>(clause.size());
+		}
+		return 0;
+	}
 
 	int out = 0;
 	for ( int i = 0; i < static_cast<int>(formula.size()); i ++ ) {
