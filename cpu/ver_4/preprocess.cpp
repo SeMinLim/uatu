@@ -457,6 +457,16 @@ int preprocessFormula( int variableCount,
 	result.finalClauses = 0;
 	result.finalLiterals = 0;
 
+	int out = 0;
+	for ( int i = 0; i < static_cast<int>(formula.size()); i ++ ) {
+		const int status = normalizeClause(variableCount, formula[i], result);
+		if ( status == 30 || status == 20 ) return status;
+		if ( status == 1 ) continue;
+		if ( out != i ) formula[out] = std::move(formula[i]);
+		out ++;
+	}
+	formula.resize(out);
+
 	const size_t occurrenceHeaders =
 		static_cast<size_t>(variableCount + 1) * 2 *
 		sizeof(std::vector<int>);
@@ -472,16 +482,6 @@ int preprocessFormula( int variableCount,
 		}
 		return 0;
 	}
-
-	int out = 0;
-	for ( int i = 0; i < static_cast<int>(formula.size()); i ++ ) {
-		const int status = normalizeClause(variableCount, formula[i], result);
-		if ( status == 30 || status == 20 ) return status;
-		if ( status == 1 ) continue;
-		if ( out != i ) formula[out] = std::move(formula[i]);
-		out ++;
-	}
-	formula.resize(out);
 
 	int status = propagateUnits(variableCount, formula, result);
 	if ( status != 0 ) return status;
