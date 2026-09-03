@@ -395,6 +395,7 @@ static int eliminateVariables( int variableCount,
 					     positiveClauses.size() + negativeClauses.size() ) {
 						bounded = false;
 						break;
+					}
 				}
 				if ( !bounded ) break;
 			}
