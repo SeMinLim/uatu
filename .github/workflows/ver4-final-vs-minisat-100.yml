@@ -1,0 +1,97 @@
+name: Evaluate Final Ver4 vs MiniSAT 100
+
+on:
+  push:
+    branches:
+      - temp/ver4-final-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-final-vs-minisat-100.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare fixed-random sample and MiniSAT baseline
+        id: prepare
+        run: |
+          set -euo pipefail
+          mkdir -p prepared
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/7c9663f0e9fd88208ba82f9b301d295d378ed698/evaluation/ver5_full_vs_minisat_100_manifest.csv \
+            -o prepared/manifest.csv
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/7c9663f0e9fd88208ba82f9b301d295d378ed698/evaluation/ver5_full_vs_minisat_100_raw.csv \
+            -o prepared/prior-raw.csv
+          python3 evaluation_temp/prepare.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-final-inputs
+          path: prepared
+          retention-days: 2
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Ver4
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -O3 -Wall -Wextra -Wpedantic -Werror'
+      - name: Run benchmark
+        run: |
+          bash evaluation_temp/run_case.sh \
+            '${{ matrix.index }}' '${{ matrix.expected }}' \
+            '${{ matrix.hash }}' '${{ matrix.url }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-final-result-${{ matrix.index }}
+          path: result/result.csv
+          if-no-files-found: error
+          retention-days: 2
+
+  summarize:
+    needs:
+      - prepare
+      - evaluate
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-final-inputs
+          path: inputs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver4-final-result-*
+          path: collected
+          merge-multiple: false
+      - name: Aggregate PAR-2
+        run: |
+          set -euo pipefail
+          mkdir -p summary
+          python3 evaluation_temp/aggregate.py
+          cat summary/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-final-vs-minisat-summary
+          path: summary
+          if-no-files-found: error
+          retention-days: 2
