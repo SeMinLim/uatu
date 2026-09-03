@@ -133,47 +133,59 @@ public:
     	std::vector<Clause> clauseDB;                   // Clause database
 	PreprocessResult preprocessing;                // Initial preprocessing state
 	std::vector<int8_t> model;                       // Reconstructed SAT model
-	double preprocessingTime;                       // Initial preprocessing elapsed time
-    	std::vector<WL> *watched_literals;              // A mapping from literal to clauses
+	double preprocessingTime = 0.0;                 // Initial preprocessing elapsed time
+    	std::vector<WL> *watched_literals = nullptr;    // A mapping from literal to clauses
     	
-	int vars, clauses, origin_clauses, conflicts;   // The number of variables, clauses, and conflicts
-	int decides, unitPropagations;                   // The number of decisions and unit propagations
-	int bcpFunctionCalls;                            // The number of BCP function calls
-    	int lbdResets, rephases, reduces;                // Parameters for LBD reset, soft rephase, and reduce
-    	int rephase_inc, rephase_limit, reduce_limit;   // Parameters for rephase and reduce
-    	int reductionRuns, vivificationRuns;
-	long long deletedClauses, minimizedLiterals;
-	long long clauseActivityBumps, dynamicLBDUpdates;
-	long long vivificationCandidates, vivifiedClauses, vivifiedLiterals;
-	long long vivificationUnits, vivificationBCPCalls;
-	long long vivificationPropagations;
-    	int threshold;                                  // A threshold for updating the local_best phase
-    	int propagated;                                 // The number of propagated literals in trail
-    	int time_stamp;                                 // Parameter for conflict analysis and LBD calculation
+	int vars = 0, clauses = 0, origin_clauses = 0, conflicts = 0;   // The number of variables, clauses, and conflicts
+	int decides = 0, unitPropagations = 0;                   // The number of decisions and unit propagations
+	int bcpFunctionCalls = 0;                            // The number of BCP function calls
+    	int lbdResets = 0, rephases = 0, reduces = 0;                // Parameters for LBD reset, soft rephase, and reduce
+    	int rephase_inc = 0, rephase_limit = 0, reduce_limit = 0;   // Parameters for rephase and reduce
+    	int reductionRuns = 0, vivificationRuns = 0;
+	long long deletedClauses = 0, minimizedLiterals = 0;
+	long long clauseActivityBumps = 0, dynamicLBDUpdates = 0;
+	long long vivificationCandidates = 0, vivifiedClauses = 0, vivifiedLiterals = 0;
+	long long vivificationUnits = 0, vivificationBCPCalls = 0;
+	long long vivificationPropagations = 0;
+    	int threshold = 0;                                  // A threshold for updating the local_best phase
+    	int propagated = 0;                                 // The number of propagated literals in trail
+    	int time_stamp = 0;                                 // Parameter for conflict analysis and LBD calculation
    
-    	int lbd_queue[50],                              // Circled queue saved the recent 50 LBDs
-            lbd_queue_size,                             // The number of LBDs in this queue
-            lbd_queue_pos;                              // The position to save the next LBD
-    	double fast_lbd_sum, slow_lbd_sum;              // Sum of the global and recent 50 LBDs
+    	int lbd_queue[50] = {0},                              // Circled queue saved the recent 50 LBDs
+            lbd_queue_size = 0,                             // The number of LBDs in this queue
+            lbd_queue_pos = 0;                              // The position to save the next LBD
+    	double fast_lbd_sum = 0.0, slow_lbd_sum = 0.0;              // Sum of the global and recent 50 LBDs
 
-    	int8_t *value,                                  // The variable assignment (1:True; -1:False; 0:Undefined)
-	       *local_best,                               // A phase with a local deepest trail
-	       *saved;                                   // Phase saving
-        int *reason,                                    // The index of the clause that implies the variable assignment
-            *level,                                     // The decision level of a variable
-            *mark;                                      // Parameter for conflict analysis
-	unsigned int *lbdMark;                          // Decision-level marks for dynamic LBD
-	unsigned int lbdStamp;
-	bool vivificationActive;
+    	int8_t *value = nullptr,                        // The variable assignment (1:True; -1:False; 0:Undefined)
+	       *local_best = nullptr,                     // A phase with a local deepest trail
+	       *saved = nullptr;                          // Phase saving
+        int *reason = nullptr,                          // The index of the clause that implies the variable assignment
+            *level = nullptr,                           // The decision level of a variable
+            *mark = nullptr;                            // Parameter for conflict analysis
+	unsigned int *lbdMark = nullptr;                // Decision-level marks for dynamic LBD
+	unsigned int lbdStamp = 0;
+	bool vivificationActive = false;
 
-    	double *activity;                              // The variables' score for VSIDS
-	double var_inc, var_decay;                       // Parameter for VSIDS
-	double clause_inc, clause_decay;                 // Parameters for learnt-clause activity
+    	double *activity = nullptr;                    // The variables' score for VSIDS
+	double var_inc = 0.0, var_decay = 0.0;                       // Parameter for VSIDS
+	double clause_inc = 0.0, clause_decay = 0.0;                 // Parameters for learnt-clause activity
     	Heap vsids;                                    // Heap to select variable
 
-	double processTimeFinal;                         // Total elapsed time
-	double propagaTimeFinal;                         // Propagation elapsed time
-	double maxBCPTime;                               // Maximum elapsed time of BCP
+	double processTimeFinal = 0.0;                         // Total elapsed time
+	double propagaTimeFinal = 0.0;                         // Propagation elapsed time
+	double maxBCPTime = 0.0;                               // Maximum elapsed time of BCP
+
+	~Solver() {
+		delete [] value;
+		delete [] local_best;
+		delete [] saved;
+		delete [] reason;
+		delete [] level;
+		delete [] mark;
+		delete [] lbdMark;
+		delete [] activity;
+		delete [] watched_literals;
+	}
 	
 	void initialize();                                        // Allocate memory and initialize the values
     	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
