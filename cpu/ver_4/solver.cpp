@@ -85,11 +85,15 @@ void Solver::initialize( void ) {
 
         conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
         lbdResets = rephases = reduces = 0;
-        reductionRuns = 0;
+        reductionRuns = vivificationRuns = 0;
         deletedClauses = minimizedLiterals = 0;
         clauseActivityBumps = dynamicLBDUpdates = 0;
+        vivificationCandidates = vivifiedClauses = vivifiedLiterals = 0;
+        vivificationUnits = vivificationBCPCalls = 0;
+        vivificationPropagations = 0;
         threshold = propagated = time_stamp = 0;
         lbdStamp = 0;
+        vivificationActive = false;
         fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
         processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
 
@@ -104,6 +108,10 @@ void Solver::initialize( void ) {
         rephase_inc = 100000;
         rephase_limit = 100000;
         reduce_limit = 8192;
+        if ( const char *env = getenv("UATU_REDUCE_INITIAL") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) reduce_limit = parsed;
+        }
 
         vsids.initialize(activity);
         value[0] = local_best[0] = saved[0] = 0;
@@ -152,7 +160,8 @@ int Solver::add_clause( std::vector<int> &c ) {
 
 // BCP (Boolean Constraint Propagation)
 int Solver::propagate( void ) {
-        ++bcpFunctionCalls;
+        if ( vivificationActive ) vivificationBCPCalls ++;
+        else bcpFunctionCalls ++;
 #if UATU_PROFILE_BCP
         using BcpClock = std::chrono::steady_clock;
         const auto bcpStart = BcpClock::now();
@@ -213,7 +222,8 @@ int Solver::propagate( void ) {
                                 }
 
                                 assign(firstWatch, level[abs(p)], cref);
-                                ++unitPropagations;
+                                if ( vivificationActive ) vivificationPropagations ++;
+                                else unitPropagations ++;
                         }
                 }
                 ws.resize(out);
@@ -608,11 +618,16 @@ void Solver::rephase() {
 }
 
 // Clause deletion
-void Solver::reduce() {
+int Solver::reduce() {
         // The only heuristic that performs a root backtrack.
         backtrack(0);
         reduces = 0;
-        reduce_limit += 512;
+        int reduceStep = 512;
+        if ( const char *env = getenv("UATU_REDUCE_STEP") ) {
+                const int parsed = atoi(env);
+                if ( parsed > 0 ) reduceStep = parsed;
+        }
+        reduce_limit += reduceStep;
         ++reductionRuns;
 
         const int oldSize = static_cast<int>(clauseDB.size());
@@ -680,6 +695,8 @@ void Solver::reduce() {
                 }
                 watchers.resize(out);
         }
+
+        return vivifyReductionEpoch();
 }
 
 // Solver
@@ -730,7 +747,7 @@ int Solver::solve() {
                         ++conflicts;
                         ++reduces;
                 } else if ( reduces >= reduce_limit ) {
-                        reduce();
+                        result = reduce();
                 } else if ( lbd_queue_size == 50 &&
                             0.8 * fast_lbd_sum / lbd_queue_size >
                                     slow_lbd_sum / conflicts ) {

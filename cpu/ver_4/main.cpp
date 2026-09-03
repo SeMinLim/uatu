@@ -46,6 +46,13 @@ int main( int argc, char **argv ) {
 	printf( "LBD Window Resets    : %d\n", solver.lbdResets );
 	printf( "Soft Rephases        : %d\n", solver.rephases );
 	printf( "Clause Reductions    : %d\n", solver.reductionRuns );
+	printf( "Vivification Runs   : %d\n", solver.vivificationRuns );
+	printf( "Vivification Candidates: %lld\n", solver.vivificationCandidates );
+	printf( "Vivified Clauses     : %lld\n", solver.vivifiedClauses );
+	printf( "Vivified Literals    : %lld\n", solver.vivifiedLiterals );
+	printf( "Vivification Units   : %lld\n", solver.vivificationUnits );
+	printf( "Vivification BCP Calls: %lld\n", solver.vivificationBCPCalls );
+	printf( "Vivification Propagations: %lld\n", solver.vivificationPropagations );
 	printf( "Deleted Clauses      : %lld\n", solver.deletedClauses );
 	printf( "Minimized Literals   : %lld\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %lld\n", solver.clauseActivityBumps );

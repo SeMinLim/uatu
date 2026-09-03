@@ -98,13 +98,15 @@ public:
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
+	// Whether this clause has already been checked by vivification
+	bool vivified;
     	// Literals in a clause
 	std::vector<int> literals;
 	// Overloading array operator
 	// Return a certain literal in a clause
     	int& operator [] ( int index ) { return literals[index]; }
 	// Initialize clause metadata and resize literal array
-    	Clause( int sz ): lbd(0), activity(0.0), useCount(0) { literals.resize(sz); }
+    	Clause( int sz ): lbd(0), activity(0.0), useCount(0), vivified(false) { literals.resize(sz); }
 };
 
 
@@ -139,9 +141,12 @@ public:
 	int bcpFunctionCalls;                            // The number of BCP function calls
     	int lbdResets, rephases, reduces;                // Parameters for LBD reset, soft rephase, and reduce
     	int rephase_inc, rephase_limit, reduce_limit;   // Parameters for rephase and reduce
-    	int reductionRuns;
+    	int reductionRuns, vivificationRuns;
 	long long deletedClauses, minimizedLiterals;
 	long long clauseActivityBumps, dynamicLBDUpdates;
+	long long vivificationCandidates, vivifiedClauses, vivifiedLiterals;
+	long long vivificationUnits, vivificationBCPCalls;
+	long long vivificationPropagations;
     	int threshold;                                  // A threshold for updating the local_best phase
     	int propagated;                                 // The number of propagated literals in trail
     	int time_stamp;                                 // Parameter for conflict analysis and LBD calculation
@@ -159,6 +164,7 @@ public:
             *mark;                                      // Parameter for conflict analysis
 	unsigned int *lbdMark;                          // Decision-level marks for dynamic LBD
 	unsigned int lbdStamp;
+	bool vivificationActive;
 
     	double *activity;                              // The variables' score for VSIDS
 	double var_inc, var_decay;                       // Parameter for VSIDS
@@ -183,7 +189,11 @@ public:
 	void backtrack( int backtrack_level );                    // Backtracking
     	void resetRecentLBD();                                  // Reset recent LBD statistics without backtracking
     	void rephase();                                         // Do rephase
-    	void reduce();                                          // Do reduce
+	void detachClause( int cref );                             // Detach a clause from watch lists
+	void attachClause( int cref );                             // Attach a clause to watch lists
+	void restoreVivificationTrail( int trailSize );            // Restore root state after vivification
+	int  vivifyReductionEpoch();                               // Vivify clauses at a reduction epoch
+    	int  reduce();                                           // Do reduce and vivification
 	int  solve();                                             // Solver
     	void printModel();                                      // Print model when the result is SAT
 };
