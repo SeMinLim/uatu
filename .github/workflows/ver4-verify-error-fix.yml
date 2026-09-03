@@ -22,11 +22,11 @@ jobs:
           - index: 0
             expected: sat
             hash: 00fd8ac9acd186a7a78a2c4d92f90de1
-            url: https://benchmark-database.de/file/00fd8ac9acd186a7a78a2c4d92f90de1
+            url: https://benchmark-database.de/file/00fd8ac9acd186a7a78a2c4d92f90de1?context=cnf
           - index: 69
             expected: sat
-            hash: ee5ce75498fdeb30d72cda8e882b4c56
-            url: https://benchmark-database.de/file/ee5ce75498fdeb30d72cda8e882b4c56
+            hash: ee5fb3e181571740adb8444bd052dbdc
+            url: https://benchmark-database.de/file/ee5fb3e181571740adb8444bd052dbdc?context=cnf
     steps:
       - uses: actions/checkout@v4
         with:
