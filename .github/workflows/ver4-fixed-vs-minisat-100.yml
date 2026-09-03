@@ -1,0 +1,207 @@
+name: Evaluate fixed Ver4 vs MiniSAT 100
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-fixed-vs-minisat-100.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-vivification-vs-minisat-100
+      - name: Prepare identical benchmark sample and baseline
+        id: prepare
+        run: |
+          set -euo pipefail
+          mkdir -p prepared
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/7c9663f0e9fd88208ba82f9b301d295d378ed698/evaluation/ver5_full_vs_minisat_100_manifest.csv \
+            -o prepared/manifest.csv
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/7c9663f0e9fd88208ba82f9b301d295d378ed698/evaluation/ver5_full_vs_minisat_100_raw.csv \
+            -o prepared/prior-raw.csv
+          python3 evaluation_temp/prepare.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-fixed-inputs
+          path: prepared
+          retention-days: 7
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-vivification-vs-minisat-100
+      - name: Build fixed Ver4
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+      - name: Run benchmark
+        run: |
+          set -euo pipefail
+          bash evaluation_temp/run_case.sh \
+            '${{ matrix.index }}' '${{ matrix.expected }}' \
+            '${{ matrix.hash }}' '${{ matrix.url }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-fixed-result-${{ matrix.index }}
+          path: result/result.csv
+          if-no-files-found: error
+          retention-days: 7
+
+  summarize:
+    needs:
+      - prepare
+      - evaluate
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-vivification-vs-minisat-100
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-fixed-inputs
+          path: inputs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver4-fixed-result-*
+          path: collected
+          merge-multiple: false
+      - name: Aggregate PAR-2
+        run: |
+          set -euo pipefail
+          mkdir -p summary
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          TIMEOUT = 1000.0
+          PENALTY = 2000.0
+          SOURCE_COMMIT = 'f441408'
+
+          rows = []
+          for path in Path('collected').rglob('result.csv'):
+              with path.open(newline='') as source:
+                  rows.extend(csv.DictReader(source))
+          rows.sort(key=lambda row: int(row['index']))
+          if len(rows) != 100:
+              raise SystemExit(f'expected 100 fixed-Ver4 results, found {len(rows)}')
+          if {int(row['index']) for row in rows} != set(range(100)):
+              raise SystemExit('duplicate or missing fixed-Ver4 indices')
+
+          prior = list(csv.DictReader(Path('inputs/prior-raw.csv').open(newline='')))
+          minisat_rows = [row for row in prior if row['solver'] == 'minisat']
+          if len(minisat_rows) != 100:
+              raise SystemExit(f'expected 100 MiniSAT rows, found {len(minisat_rows)}')
+
+          def summarize(data, solver):
+              solved = [row for row in data if row['correct'] == '1']
+              par2 = sum(
+                  min(float(row['wall_sec']), TIMEOUT)
+                  if row['correct'] == '1' else PENALTY
+                  for row in data
+              ) / len(data)
+              return {
+                  'solver': solver,
+                  'benchmarks': len(data),
+                  'solved': len(solved),
+                  'sat_solved': sum(
+                      row['expected'] == 'sat' and row['correct'] == '1'
+                      for row in data
+                  ),
+                  'unsat_solved': sum(
+                      row['expected'] == 'unsat' and row['correct'] == '1'
+                      for row in data
+                  ),
+                  'timeouts': sum(row['result'] == 'timeout' for row in data),
+                  'wrong_answers': sum(
+                      row['result'] in ('sat', 'unsat') and row['correct'] != '1'
+                      for row in data
+                  ),
+                  'errors': sum(row['result'] == 'error' for row in data),
+                  'par2_sec': par2,
+                  'max_rss_kb': max(int(float(row['rss_kb'])) for row in data),
+              }
+
+          minisat = summarize(minisat_rows, 'minisat')
+          fixed = summarize(rows, 'ver4-fixed')
+          if minisat['solved'] != 46 or abs(minisat['par2_sec'] - 1173.1182) > 1e-6:
+              raise SystemExit(f'unexpected MiniSAT baseline: {minisat}')
+
+          beats = fixed['par2_sec'] < minisat['par2_sec']
+          speedup = minisat['par2_sec'] / fixed['par2_sec']
+          relative = fixed['par2_sec'] / minisat['par2_sec']
+          difference = fixed['par2_sec'] - minisat['par2_sec']
+
+          decision = {
+              'dataset': 'fixed-random 100 SAT Competition 2025 Main Track instances',
+              'composition': {'sat': 50, 'unsat': 50},
+              'timeout_sec': 1000,
+              'par2_penalty_sec': 2000,
+              'source_commit': SOURCE_COMMIT,
+              'beats_minisat': beats,
+              'par2_speedup_over_minisat': speedup,
+              'ver4_par2_relative_to_minisat': relative,
+              'par2_difference_sec': difference,
+              'minisat': minisat,
+              'ver4_fixed': fixed,
+          }
+          Path('summary/decision.json').write_text(json.dumps(decision, indent=2) + '\n')
+          with Path('summary/ver4_fixed_raw.csv').open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader()
+              writer.writerows(rows)
+
+          report = [
+              '# Fixed Uatu Ver4 vs MiniSAT',
+              '',
+              '- Dataset: fixed-random 100 SAT Competition 2025 Main Track instances',
+              '- Composition: 50 SAT and 50 UNSAT',
+              '- Timeout: 1,000 seconds per solver and benchmark',
+              '- PAR-2 penalty: 2,000 seconds for timeout, error, or wrong answer',
+              f'- Fixed Ver4 source commit: `{SOURCE_COMMIT}`',
+              '- MiniSAT baseline: identical 100-instance evaluation',
+              '',
+              '| Solver | Solved | SAT | UNSAT | Timeout | Wrong | Errors | PAR-2 (s) | Max RSS (KiB) |',
+              '|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+              f"| MiniSAT | {minisat['solved']} | {minisat['sat_solved']} | {minisat['unsat_solved']} | {minisat['timeouts']} | {minisat['wrong_answers']} | {minisat['errors']} | {minisat['par2_sec']:.6f} | {minisat['max_rss_kb']} |",
+              f"| Uatu Ver4 fixed | {fixed['solved']} | {fixed['sat_solved']} | {fixed['unsat_solved']} | {fixed['timeouts']} | {fixed['wrong_answers']} | {fixed['errors']} | {fixed['par2_sec']:.6f} | {fixed['max_rss_kb']} |",
+              '',
+              f"MiniSAT exceeded: **{'YES' if beats else 'NO'}**",
+              f"PAR-2 speedup over MiniSAT: **{speedup:.6f}x**",
+              f"Fixed Ver4 PAR-2 relative to MiniSAT: **{relative:.6f}x**",
+              f"PAR-2 difference, fixed Ver4 minus MiniSAT: **{difference:.6f} seconds**",
+          ]
+          Path('summary/report.md').write_text('\n'.join(report) + '\n')
+          print('\n'.join(report))
+          PY
+          cat summary/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-fixed-vs-minisat-summary
+          path: summary
+          if-no-files-found: error
+          retention-days: 7
