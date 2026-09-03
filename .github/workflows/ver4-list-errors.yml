@@ -1,0 +1,40 @@
+name: List Ver4 benchmark errors
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-list-errors.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  list-errors:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver4-vivification-vs-minisat-summary
+          path: prior-summary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 33713537896
+      - name: Print error rows
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('prior-summary/ver4_raw.csv').open(newline='')))
+          print('index,expected,result,correct,wall_sec,user_sec,sys_sec,rss_kb,exit_code,hash,url')
+          for row in rows:
+              if row['result'] == 'error':
+                  fields = [
+                      'index', 'expected', 'result', 'correct', 'wall_sec',
+                      'user_sec', 'sys_sec', 'rss_kb', 'exit_code', 'hash', 'url'
+                  ]
+                  print(','.join(row[field] for field in fields))
+          PY
