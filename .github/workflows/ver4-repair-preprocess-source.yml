@@ -1,0 +1,53 @@
+name: Repair Ver4 Preprocessing Source
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-recheck
+    paths:
+      - .github/workflows/ver4-repair-preprocess-source.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Repair, build, and commit
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('cpu/ver_4/preprocess.cpp')
+          text = path.read_text()
+          old = '''\t\t\t\t\tif ( uniqueResolvents.size() >
+          \t\t\t\t\t     positiveClauses.size() + negativeClauses.size() ) {
+          \t\t\t\t\t\tbounded = false;
+          \t\t\t\t\t\tbreak;
+          \t\t\t\t}
+          \t\t\t\tif ( !bounded ) break;
+          '''
+          new = '''\t\t\t\t\tif ( uniqueResolvents.size() >
+          \t\t\t\t\t     positiveClauses.size() + negativeClauses.size() ) {
+          \t\t\t\t\t\tbounded = false;
+          \t\t\t\t\t\tbreak;
+          \t\t\t\t\t}
+          \t\t\t\t}
+          \t\t\t\tif ( !bounded ) break;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one malformed block, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+          PY
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -O3 -Wall -Wextra -Wpedantic -Werror'
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_4/preprocess.cpp
+          git commit -m 'bound Ver4 preprocessing auxiliary memory'
+          git push origin HEAD:temp/ver4-error-recheck
