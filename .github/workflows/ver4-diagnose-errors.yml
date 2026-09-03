@@ -1,0 +1,102 @@
+name: Diagnose Ver4 benchmark errors
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-diagnose-errors.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download prior Ver4 summary
+        uses: actions/download-artifact@v4
+        with:
+          name: ver4-vivification-vs-minisat-summary
+          path: prior-summary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 33713537896
+
+      - name: Select error cases
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+
+          rows = list(csv.DictReader(Path('prior-summary/ver4_raw.csv').open(newline='')))
+          errors = [row for row in rows if row['result'] == 'error']
+          if not errors:
+              raise SystemExit('no error rows found')
+
+          print('index,expected,exit_code,hash,url')
+          with Path('error-cases.tsv').open('w') as output:
+              for row in errors:
+                  print(','.join((row['index'], row['expected'], row['exit_code'], row['hash'], row['url'])))
+                  output.write('\t'.join((row['index'], row['expected'], row['hash'], row['url'])) + '\n')
+          PY
+
+      - name: Build release and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all
+          mkdir -p diagnostic
+          g++ -std=c++17 -O1 -g \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -Wall -Wextra -Wpedantic \
+            cpu/ver_4/solver.cpp cpu/ver_4/preprocess.cpp \
+            cpu/ver_4/vivify.cpp cpu/ver_4/main.cpp \
+            -o diagnostic/uatu_solver_asan
+
+      - name: Reproduce error cases
+        run: |
+          set -euo pipefail
+          mkdir -p diagnostic/cases
+          while IFS=$'\t' read -r index expected hash url; do
+            case_dir="diagnostic/cases/${index}"
+            mkdir -p "$case_dir"
+            curl -fL --retry 8 --retry-delay 5 "$url" -o "$case_dir/instance.cnf.xz"
+            xz -t "$case_dir/instance.cnf.xz"
+            xz -dc "$case_dir/instance.cnf.xz" > "$case_dir/instance.cnf"
+
+            printf '%s\n' "===== CASE ${index} ${hash} EXPECTED ${expected}: RELEASE ====="
+            set +e
+            env UATU_TIMEOUT_SEC=180 UATU_PRINT_MODEL=1 \
+              timeout --signal=TERM --kill-after=5s 190s \
+              cpu/ver_4/obj/uatu_solver "$case_dir/instance.cnf" \
+              > "$case_dir/release.out" 2>&1
+            release_rc=$?
+            set -e
+            printf '%s\n' "release exit code: ${release_rc}"
+            tail -200 "$case_dir/release.out" || true
+
+            printf '%s\n' "===== CASE ${index} ${hash} EXPECTED ${expected}: ASAN/UBSAN ====="
+            set +e
+            env ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1 \
+              UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+              UATU_TIMEOUT_SEC=180 UATU_PRINT_MODEL=1 \
+              timeout --signal=TERM --kill-after=5s 190s \
+              diagnostic/uatu_solver_asan "$case_dir/instance.cnf" \
+              > "$case_dir/asan.out" 2>&1
+            asan_rc=$?
+            set -e
+            printf '%s\n' "asan exit code: ${asan_rc}"
+            tail -300 "$case_dir/asan.out" || true
+          done < error-cases.tsv
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-error-diagnostics
+          path: diagnostic
+          if-no-files-found: error
+          retention-days: 7
