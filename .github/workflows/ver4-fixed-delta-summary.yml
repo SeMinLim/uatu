@@ -1,0 +1,143 @@
+name: Recompute fixed Ver4 PAR-2
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-fixed-delta-summary.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  summarize:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download original 100-instance result
+        uses: actions/download-artifact@v4
+        with:
+          name: ver4-vivification-vs-minisat-summary
+          path: original
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 33713537896
+      - name: Download fixed result for index 0
+        uses: actions/download-artifact@v4
+        with:
+          name: ver4-error-fix-0
+          path: fixed-0
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 33722104580
+      - name: Download fixed result for index 69
+        uses: actions/download-artifact@v4
+        with:
+          name: ver4-error-fix-69
+          path: fixed-69
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 33722104580
+      - name: Recompute corrected PAR-2
+        run: |
+          set -euo pipefail
+          mkdir -p summary
+          python3 - <<'PY'
+          import csv
+          import json
+          from pathlib import Path
+
+          TIMEOUT = 1000.0
+          PENALTY = 2000.0
+
+          original = list(csv.DictReader(Path('original/ver4_raw.csv').open(newline='')))
+          if len(original) != 100:
+              raise SystemExit(f'expected 100 original rows, found {len(original)}')
+
+          replacements = {}
+          for index in (0, 69):
+              candidates = list(Path(f'fixed-{index}').rglob('result.csv'))
+              if len(candidates) != 1:
+                  raise SystemExit(f'index {index}: expected one result.csv, found {len(candidates)}')
+              row = next(csv.DictReader(candidates[0].open(newline='')))
+              if int(row['index']) != index:
+                  raise SystemExit(f'index mismatch in {candidates[0]}')
+              if row['result'] == 'error':
+                  raise SystemExit(f'index {index} still reports error')
+              replacements[index] = row
+
+          rows = []
+          for row in original:
+              index = int(row['index'])
+              rows.append(replacements.get(index, row))
+          rows.sort(key=lambda row: int(row['index']))
+
+          solved = [row for row in rows if row['correct'] == '1']
+          par2 = sum(
+              min(float(row['wall_sec']), TIMEOUT)
+              if row['correct'] == '1' else PENALTY
+              for row in rows
+          ) / len(rows)
+          minisat_par2 = 1173.1182
+          speedup = minisat_par2 / par2
+          relative = par2 / minisat_par2
+          difference = par2 - minisat_par2
+
+          result = {
+              'method': 'reuse 98 unchanged rows and replace the two former error rows with fixed-code reruns',
+              'dataset': 'fixed-random 100 SAT Competition 2025 Main Track instances',
+              'composition': {'sat': 50, 'unsat': 50},
+              'timeout_sec': 1000,
+              'par2_penalty_sec': 2000,
+              'main_commit': 'ae7ecf1e01ca717801a59496680f4fcc0a15a10f',
+              'solved': len(solved),
+              'sat_solved': sum(row['expected'] == 'sat' and row['correct'] == '1' for row in rows),
+              'unsat_solved': sum(row['expected'] == 'unsat' and row['correct'] == '1' for row in rows),
+              'timeouts': sum(row['result'] == 'timeout' for row in rows),
+              'errors': sum(row['result'] == 'error' for row in rows),
+              'wrong_answers': sum(
+                  row['result'] in ('sat', 'unsat') and row['correct'] != '1'
+                  for row in rows
+              ),
+              'par2_sec': par2,
+              'minisat_par2_sec': minisat_par2,
+              'beats_minisat': par2 < minisat_par2,
+              'speedup_over_minisat': speedup,
+              'relative_to_minisat': relative,
+              'difference_sec': difference,
+              'replaced_rows': [replacements[0], replacements[69]],
+          }
+          Path('summary/decision.json').write_text(json.dumps(result, indent=2) + '\n')
+          with Path('summary/fixed_rows.csv').open('w', newline='') as output:
+              writer = csv.DictWriter(output, fieldnames=list(rows[0]))
+              writer.writeheader()
+              writer.writerows(rows)
+
+          report = [
+              '# Corrected Uatu Ver4 vs MiniSAT',
+              '',
+              '- Dataset: fixed-random 100 SAT Competition 2025 Main Track instances',
+              '- Composition: 50 SAT and 50 UNSAT',
+              '- Timeout: 1,000 seconds per solver and benchmark',
+              '- PAR-2 penalty: 2,000 seconds for timeout, error, or wrong answer',
+              '- Method: reuse 98 unchanged rows and replace both former error rows with fixed-code reruns',
+              '- Fixed source on main: `ae7ecf1e01ca717801a59496680f4fcc0a15a10f`',
+              '',
+              '| Solver | Solved | SAT | UNSAT | Timeout | Wrong | Errors | PAR-2 (s) |',
+              '|---|---:|---:|---:|---:|---:|---:|---:|',
+              '| MiniSAT | 46 | 25 | 21 | 54 | 0 | 0 | 1173.118200 |',
+              f"| Uatu Ver4 fixed | {result['solved']} | {result['sat_solved']} | {result['unsat_solved']} | {result['timeouts']} | {result['wrong_answers']} | {result['errors']} | {par2:.6f} |",
+              '',
+              f"MiniSAT exceeded: **{'YES' if result['beats_minisat'] else 'NO'}**",
+              f"PAR-2 speedup over MiniSAT: **{speedup:.6f}x**",
+              f"Fixed Ver4 PAR-2 relative to MiniSAT: **{relative:.6f}x**",
+              f"PAR-2 difference, fixed Ver4 minus MiniSAT: **{difference:.6f} seconds**",
+          ]
+          Path('summary/report.md').write_text('\n'.join(report) + '\n')
+          print('\n'.join(report))
+          PY
+          cat summary/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver4-fixed-delta-summary
+          path: summary
+          if-no-files-found: error
+          retention-days: 7
