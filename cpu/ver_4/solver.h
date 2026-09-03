@@ -178,6 +178,7 @@ public:
 	void initialize();                                        // Allocate memory and initialize the values
     	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
 	int  add_clause( std::vector<int> &c );                   // Add new clause to clause database
+	int  add_clause( std::vector<int> &&c );                  // Move an input clause to clause database
 	int  propagate();                                         // BCP (Boolean Constraint Propagation)
     	int  parse( char *filename );                             // Read CNF file
 	int  decide();                                            // Pick decision variable based on VSIDS

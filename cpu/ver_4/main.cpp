@@ -1,5 +1,6 @@
 #include "solver.h"
 #include <cstdlib>
+#include <new>
 
 
 int main( int argc, char **argv ) {
@@ -9,7 +10,16 @@ int main( int argc, char **argv ) {
 	}
 
 	Solver solver;
-	int result = solver.parse(argv[1]);
+	int result = 30;
+	try {
+		result = solver.parse(argv[1]);
+	} catch ( const std::bad_alloc & ) {
+		fprintf( stderr, "memory allocation failed while loading the instance\n" );
+		printf( "----------------------------------------------------\n" );
+		printf( "UNSOLVED\n" );
+		printf( "----------------------------------------------------\n" );
+		return 0;
+	}
 
 	printf( "----------------------------------------------------\n" );
 	if ( result == 20 ) {
@@ -17,7 +27,12 @@ int main( int argc, char **argv ) {
 	} else if ( result == 30 ) {
 		printf( "UNSOLVED\n" );
 	} else {
-		result = solver.solve();
+		try {
+			result = solver.solve();
+		} catch ( const std::bad_alloc & ) {
+			fprintf( stderr, "memory allocation failed while solving the instance\n" );
+			result = 30;
+		}
 		if ( result == 10 ) {
 			printf( "SATISFIABLE\n" );
 			const char *print = getenv("UATU_PRINT_MODEL");
