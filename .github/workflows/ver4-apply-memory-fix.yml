@@ -1,0 +1,131 @@
+name: Apply Ver4 memory fix
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-apply-memory-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: temp/ver4-vivification-vs-minisat-100
+
+      - name: Apply peak-memory fix
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              file_path = Path(path)
+              text = file_path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}')
+              file_path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'cpu/ver_4/solver.h',
+              '\tint  add_clause( std::vector<int> &c );                   // Add new clause to clause database\n',
+              '\tint  add_clause( std::vector<int> &c );                   // Add new clause to clause database\n'
+              '\tint  add_clause( std::vector<int> &&c );                  // Move an input clause to clause database\n'
+          )
+
+          add_clause_old = '''// BCP (Boolean Constraint Propagation)\nint Solver::propagate( void ) {\n'''
+          add_clause_new = '''// Move an input clause to the database without copying its literal buffer\nint Solver::add_clause( std::vector<int> &&c ) {\n\tconst int first = c[0];\n\tconst int second = c[1];\n\tclauseDB.push_back(Clause(0));\n\n\tint id = clauseDB.size() - 1;\n\tclauseDB[id].literals = std::move(c);\n\n\tWatchedLiterals(-first).push_back(WL(id, second));\n\tWatchedLiterals(-second).push_back(WL(id, first));\n\n\treturn id;\n}\n\n// BCP (Boolean Constraint Propagation)\nint Solver::propagate( void ) {\n'''
+          replace_once('cpu/ver_4/solver.cpp', add_clause_old, add_clause_new)
+
+          replace_once(
+              'cpu/ver_4/solver.cpp',
+              '''        if ( !headerSeen || !buffer.empty() ) {\n                fprintf( stderr, "PARSE ERROR: incomplete CNF\\n" );\n                return 30;\n        }\n\n        const double preprocessingStart = timeCheckerCPU();\n''',
+              '''        if ( !headerSeen || !buffer.empty() ) {\n                fprintf( stderr, "PARSE ERROR: incomplete CNF\\n" );\n                return 30;\n        }\n\n        // Parsing is complete, so release the raw DIMACS image before preprocessing.\n        std::vector<uint8_t>().swap(data);\n\n        const double preprocessingStart = timeCheckerCPU();\n'''
+          )
+
+          replace_once(
+              'cpu/ver_4/solver.cpp',
+              '''                } else {\n                        add_clause(clause);\n                }\n        }\n\n        origin_clauses = static_cast<int>(clauseDB.size());\n''',
+              '''                } else {\n                        add_clause(std::move(clause));\n                }\n        }\n        std::vector<std::vector<int>>().swap(formula);\n\n        origin_clauses = static_cast<int>(clauseDB.size());\n'''
+          )
+
+          replace_once(
+              'cpu/ver_4/preprocess.cpp',
+              '''\t\tfor ( int clauseIndex : positiveClauses ) {\n\t\t\trecord.clauses.push_back(formula[clauseIndex]);\n\t\t\talive[clauseIndex] = 0;\n\t\t}\n\t\tfor ( int clauseIndex : negativeClauses ) {\n\t\t\trecord.clauses.push_back(formula[clauseIndex]);\n\t\t\talive[clauseIndex] = 0;\n\t\t}\n''',
+              '''\t\tfor ( int clauseIndex : positiveClauses ) {\n\t\t\trecord.clauses.push_back(std::move(formula[clauseIndex]));\n\t\t\talive[clauseIndex] = 0;\n\t\t}\n\t\tfor ( int clauseIndex : negativeClauses ) {\n\t\t\trecord.clauses.push_back(std::move(formula[clauseIndex]));\n\t\t\talive[clauseIndex] = 0;\n\t\t}\n'''
+          )
+
+          replace_once(
+              'cpu/ver_4/main.cpp',
+              '#include <cstdlib>\n',
+              '#include <cstdlib>\n#include <new>\n'
+          )
+
+          replace_once(
+              'cpu/ver_4/main.cpp',
+              '''\tSolver solver;\n\tint result = solver.parse(argv[1]);\n\n\tprintf( "----------------------------------------------------\\n" );\n''',
+              '''\tSolver solver;\n\tint result = 30;\n\ttry {\n\t\tresult = solver.parse(argv[1]);\n\t} catch ( const std::bad_alloc & ) {\n\t\tfprintf( stderr, "memory allocation failed while loading the instance\\n" );\n\t\tprintf( "----------------------------------------------------\\n" );\n\t\tprintf( "UNSOLVED\\n" );\n\t\tprintf( "----------------------------------------------------\\n" );\n\t\treturn 0;\n\t}\n\n\tprintf( "----------------------------------------------------\\n" );\n'''
+          )
+
+          replace_once(
+              'cpu/ver_4/main.cpp',
+              '''\t} else {\n\t\tresult = solver.solve();\n\t\tif ( result == 10 ) {\n''',
+              '''\t} else {\n\t\ttry {\n\t\t\tresult = solver.solve();\n\t\t} catch ( const std::bad_alloc & ) {\n\t\t\tfprintf( stderr, "memory allocation failed while solving the instance\\n" );\n\t\t\tresult = 30;\n\t\t}\n\t\tif ( result == 10 ) {\n'''
+          )
+          PY
+
+          git diff --check
+          git diff -- cpu/ver_4
+
+      - name: Build with strict warnings
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+      - name: Run smoke tests
+        run: |
+          set -euo pipefail
+          cat > /tmp/ver4-sat.cnf <<'EOF'
+          p cnf 3 3
+          1 2 0
+          -1 3 0
+          -2 3 0
+          EOF
+          cat > /tmp/ver4-unsat.cnf <<'EOF'
+          p cnf 1 2
+          1 0
+          -1 0
+          EOF
+
+          set +e
+          env UATU_TIMEOUT_SEC=10 UATU_PRINT_MODEL=1 \
+            cpu/ver_4/obj/uatu_solver /tmp/ver4-sat.cnf > /tmp/ver4-sat.out 2>&1
+          sat_rc=$?
+          env UATU_TIMEOUT_SEC=10 \
+            cpu/ver_4/obj/uatu_solver /tmp/ver4-unsat.cnf > /tmp/ver4-unsat.out 2>&1
+          unsat_rc=$?
+          set -e
+
+          cat /tmp/ver4-sat.out
+          cat /tmp/ver4-unsat.out
+          [[ $sat_rc -eq 10 ]]
+          [[ $unsat_rc -eq 20 ]]
+          grep -qx 'SATISFIABLE' /tmp/ver4-sat.out
+          grep -qx 'UNSATISFIABLE' /tmp/ver4-unsat.out
+
+      - name: Commit source fix
+        run: |
+          set -euo pipefail
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add cpu/ver_4/solver.h cpu/ver_4/solver.cpp \
+                  cpu/ver_4/preprocess.cpp cpu/ver_4/main.cpp
+          git commit -m 'fix Ver4 peak memory exhaustion'
+          git push origin HEAD:temp/ver4-vivification-vs-minisat-100
