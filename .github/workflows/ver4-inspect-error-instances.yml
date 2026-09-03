@@ -1,0 +1,32 @@
+name: Inspect Ver4 error instances
+
+on:
+  push:
+    branches:
+      - temp/ver4-vivification-vs-minisat-100
+    paths:
+      - .github/workflows/ver4-inspect-error-instances.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - index: 0
+            url: https://benchmark-database.de/file/00fd8ac9acd186a7a78a2c4d92f90de1?context=cnf
+          - index: 69
+            url: https://benchmark-database.de/file/ee5fb3e181571740adb8444bd052dbdc?context=cnf
+    steps:
+      - name: Inspect archive and DIMACS header
+        run: |
+          set -euo pipefail
+          curl -fL --retry 8 --retry-delay 5 '${{ matrix.url }}' -o instance.cnf.xz
+          printf '%s\n' '----- xz metadata -----'
+          xz --robot --list instance.cnf.xz
+          printf '%s\n' '----- DIMACS header -----'
+          xz -dc instance.cnf.xz | awk '/^p[[:space:]]+cnf[[:space:]]+/ {print; exit}'
