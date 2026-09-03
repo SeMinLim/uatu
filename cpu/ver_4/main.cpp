@@ -1,6 +1,7 @@
 #include "solver.h"
 #include <cstdlib>
 #include <new>
+#include <stdexcept>
 
 
 int main( int argc, char **argv ) {
@@ -19,6 +20,12 @@ int main( int argc, char **argv ) {
 		printf( "UNSOLVED\n" );
 		printf( "----------------------------------------------------\n" );
 		return 0;
+	} catch ( const std::length_error & ) {
+		fprintf( stderr, "container capacity exceeded while loading the instance\n" );
+		printf( "----------------------------------------------------\n" );
+		printf( "UNSOLVED\n" );
+		printf( "----------------------------------------------------\n" );
+		return 0;
 	}
 
 	printf( "----------------------------------------------------\n" );
@@ -31,6 +38,9 @@ int main( int argc, char **argv ) {
 			result = solver.solve();
 		} catch ( const std::bad_alloc & ) {
 			fprintf( stderr, "memory allocation failed while solving the instance\n" );
+			result = 30;
+		} catch ( const std::length_error & ) {
+			fprintf( stderr, "container capacity exceeded while solving the instance\n" );
 			result = 30;
 		}
 		if ( result == 10 ) {
