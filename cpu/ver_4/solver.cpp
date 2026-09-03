@@ -158,6 +158,21 @@ int Solver::add_clause( std::vector<int> &c ) {
     	return id;
 }
 
+// Move an input clause to the database without copying its literal buffer
+int Solver::add_clause( std::vector<int> &&c ) {
+	const int first = c[0];
+	const int second = c[1];
+	clauseDB.push_back(Clause(0));
+
+	int id = clauseDB.size() - 1;
+	clauseDB[id].literals = std::move(c);
+
+	WatchedLiterals(-first).push_back(WL(id, second));
+	WatchedLiterals(-second).push_back(WL(id, first));
+
+	return id;
+}
+
 // BCP (Boolean Constraint Propagation)
 int Solver::propagate( void ) {
         if ( vivificationActive ) vivificationBCPCalls ++;
@@ -318,6 +333,9 @@ int Solver::parse( char *filename ) {
                 return 30;
         }
 
+        // Parsing is complete, so release the raw DIMACS image before preprocessing.
+        std::vector<uint8_t>().swap(data);
+
         const double preprocessingStart = timeCheckerCPU();
         PreprocessResult preprocessResult;
         const int preprocessStatus = preprocessFormula(vars, formula, preprocessResult);
@@ -343,9 +361,10 @@ int Solver::parse( char *filename ) {
                         if ( Value(clause[0]) == -1 ) return 20;
                         if ( Value(clause[0]) == 0 ) assign(clause[0], 0, -1);
                 } else {
-                        add_clause(clause);
+                        add_clause(std::move(clause));
                 }
         }
+        std::vector<std::vector<int>>().swap(formula);
 
         origin_clauses = static_cast<int>(clauseDB.size());
         return propagate() == -1 ? 0 : 20;

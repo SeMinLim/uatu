@@ -404,11 +404,11 @@ static int eliminateVariables( int variableCount,
 		record.variable = variable;
 		record.clauses.reserve(positiveClauses.size() + negativeClauses.size());
 		for ( int clauseIndex : positiveClauses ) {
-			record.clauses.push_back(formula[clauseIndex]);
+			record.clauses.push_back(std::move(formula[clauseIndex]));
 			alive[clauseIndex] = 0;
 		}
 		for ( int clauseIndex : negativeClauses ) {
-			record.clauses.push_back(formula[clauseIndex]);
+			record.clauses.push_back(std::move(formula[clauseIndex]));
 			alive[clauseIndex] = 0;
 		}
 
