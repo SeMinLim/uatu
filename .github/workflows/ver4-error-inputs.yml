@@ -1,0 +1,40 @@
+name: Inspect Ver4 Error Inputs
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-recheck
+    paths:
+      - .github/workflows/ver4-error-inputs.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - index: 0
+            hash: 00fd8ac9acd186a7a78a2c4d92f90de1
+          - index: 69
+            hash: ee5fb3e181571740adb8444bd052dbdc
+    steps:
+      - name: Download and inspect
+        env:
+          INDEX: ${{ matrix.index }}
+          HASH: ${{ matrix.hash }}
+        run: |
+          set -euo pipefail
+          curl -fL --retry 8 --retry-delay 5 \
+            "https://benchmark-database.de/file/${HASH}?context=cnf" \
+            -o instance.cnf.xz
+          xz -dc instance.cnf.xz > instance.cnf
+          printf 'index=%s\n' "$INDEX"
+          printf 'hash=%s\n' "$HASH"
+          grep -m1 '^p cnf ' instance.cnf
+          printf 'compressed_bytes=%s\n' "$(stat -c '%s' instance.cnf.xz)"
+          printf 'uncompressed_bytes=%s\n' "$(stat -c '%s' instance.cnf)"
