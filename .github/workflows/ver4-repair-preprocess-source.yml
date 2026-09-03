@@ -17,32 +17,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Repair, build, and commit
+      - name: Rebuild source from main, validate, and commit
         run: |
           set -euo pipefail
+          git fetch origin main --depth=1
+          git show origin/main:cpu/ver_4/preprocess.cpp > cpu/ver_4/preprocess.cpp
           python3 - <<'PY'
           from pathlib import Path
 
           path = Path('cpu/ver_4/preprocess.cpp')
           text = path.read_text()
-          old = '''\t\t\t\t\tif ( uniqueResolvents.size() >
-          \t\t\t\t\t     positiveClauses.size() + negativeClauses.size() ) {
-          \t\t\t\t\t\tbounded = false;
-          \t\t\t\t\t\tbreak;
-          \t\t\t\t}
-          \t\t\t\tif ( !bounded ) break;
-          '''
-          new = '''\t\t\t\t\tif ( uniqueResolvents.size() >
-          \t\t\t\t\t     positiveClauses.size() + negativeClauses.size() ) {
-          \t\t\t\t\t\tbounded = false;
-          \t\t\t\t\t\tbreak;
-          \t\t\t\t\t}
-          \t\t\t\t}
-          \t\t\t\tif ( !bounded ) break;
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one malformed block, found {text.count(old)}')
-          path.write_text(text.replace(old, new))
+
+          include_old = '#include <cstdlib>\n#include <deque>\n'
+          include_new = '#include <cstdlib>\n#include <cstdio>\n#include <deque>\n'
+          if text.count(include_old) != 1:
+              raise SystemExit('unexpected preprocess include block')
+          text = text.replace(include_old, include_new)
+
+          macro_old = '#define PREPROCESS_MAX_RESOLVENT_LENGTH 20\n'
+          macro_new = (
+              '#define PREPROCESS_MAX_RESOLVENT_LENGTH 20\n'
+              '#define PREPROCESS_MAX_AUXILIARY_BYTES (512ULL * 1024ULL * 1024ULL)\n'
+          )
+          if text.count(macro_old) != 1:
+              raise SystemExit('unexpected preprocess macro block')
+          text = text.replace(macro_old, macro_new)
+
+          gate_point = '''\tformula.resize(out);\n\n\tint status = propagateUnits(variableCount, formula, result);\n'''
+          gate = '''\tformula.resize(out);\n\n\tconst size_t occurrenceHeaders =\n\t\tstatic_cast<size_t>(variableCount + 1) * 2 *\n\t\tsizeof(std::vector<int>);\n\tconst size_t formulaHeaders =\n\t\tformula.capacity() * sizeof(std::vector<int>);\n\tif ( occurrenceHeaders > PREPROCESS_MAX_AUXILIARY_BYTES ||\n\t     formulaHeaders > PREPROCESS_MAX_AUXILIARY_BYTES -\n\t\toccurrenceHeaders ) {\n\t\tfprintf( stderr, "preprocessing skipped for large formula\\n" );\n\t\tresult.finalClauses = static_cast<long long>(formula.size());\n\t\tfor ( const std::vector<int> &clause : formula ) {\n\t\t\tresult.finalLiterals += static_cast<long long>(clause.size());\n\t\t}\n\t\treturn 0;\n\t}\n\n\tint status = propagateUnits(variableCount, formula, result);\n'''
+          if text.count(gate_point) != 1:
+              raise SystemExit('unexpected preprocessing pipeline block')
+          text = text.replace(gate_point, gate)
+          path.write_text(text)
           PY
           make -C cpu/ver_4 clean all \
             CXXFLAGS_COMMON='-std=c++17 -O3 -Wall -Wextra -Wpedantic -Werror'
