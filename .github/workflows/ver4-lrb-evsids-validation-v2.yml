@@ -1,0 +1,101 @@
+name: Validate Uatu Ver4 LRB EVSIDS V2
+
+on:
+  push:
+    branches:
+      - temp/ver4-lrb-evsids-validation
+    paths:
+      - .github/workflows/ver4-lrb-evsids-validation-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Materialize LRB EVSIDS Ver4
+        run: |
+          set -euo pipefail
+          python3 .validation/ver4-lrb-evsids/apply.py
+          python3 .validation/ver4-lrb-evsids/fix_tabs.py
+          python3 .validation/ver4-lrb-evsids/repair_validation.py
+          python3 -m py_compile \
+            .validation/ver4-lrb-evsids/validate.py \
+            .validation/ver4-lrb-evsids/benchmark_validate.py
+
+      - name: Verify preserved Uatu search policy
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('cpu/ver_4/solver.cpp').read_text()
+          reset = source[source.index('void Solver::resetRecentLBD()'):
+                         source.index('// Rephase', source.index('void Solver::resetRecentLBD()'))]
+          rephase = source[source.index('void Solver::rephase()'):
+                           source.index('// Clause deletion', source.index('void Solver::rephase()'))]
+          reduce = source[source.index('int Solver::reduce()'):
+                          source.index('// Solver', source.index('int Solver::reduce()'))]
+          assert 'backtrack(' not in reset
+          assert 'backtrack(' not in rephase
+          assert 'backtrack(0);' in reduce
+          assert 'var_decay = 0.95;' in source
+          assert 'update_score(variable, 0.5)' not in source
+          assert 'Original second-stage bump' not in source
+          PY
+
+      - name: Build release debug and sanitizer binaries
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 debug \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          g++ -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer \
+            -DUATU_PROFILE_BCP=0 \
+            cpu/ver_4/solver.cpp cpu/ver_4/preprocess.cpp \
+            cpu/ver_4/vivify.cpp cpu/ver_4/branching.cpp \
+            cpu/ver_4/main.cpp -o cpu/ver_4/obj/uatu_solver_sanitize
+
+      - name: Validate random CNFs and hybrid branching paths
+        run: |
+          set -euo pipefail
+          python3 .validation/ver4-lrb-evsids/validate.py core
+
+      - name: Select ten random SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          mkdir -p validation-output
+          curl -fL --retry 8 --retry-delay 5 \
+            https://raw.githubusercontent.com/SeMinLim/uatu/7c9663f0e9fd88208ba82f9b301d295d378ed698/evaluation/ver5_full_vs_minisat_100_manifest.csv \
+            -o validation-output/source.csv
+          python3 .validation/ver4-lrb-evsids/validate.py select \
+            validation-output/source.csv validation-output/selected.csv
+          cat validation-output/selected.csv
+
+      - name: Validate ten SAT Competition 2025 benchmarks
+        run: |
+          set -euo pipefail
+          python3 .validation/ver4-lrb-evsids/benchmark_validate.py \
+            validation-output/selected.csv validation-output/results.csv
+          cat validation-output/results.csv
+
+      - name: Package validated source
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean
+          tar -czf validation-output/uatu-ver4-lrb-evsids-source.tar.gz \
+            README.md cpu/ver_4
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uatu-ver4-lrb-evsids-validated-source-v2
+          path: validation-output
+          if-no-files-found: error
+          retention-days: 7
