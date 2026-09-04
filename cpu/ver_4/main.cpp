@@ -82,6 +82,14 @@ int main( int argc, char **argv ) {
 	printf( "Minimized Literals   : %lld\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %lld\n", solver.clauseActivityBumps );
 	printf( "Dynamic LBD Updates  : %lld\n", solver.dynamicLBDUpdates );
+	printf( "LRB Decisions        : %lld\n", solver.lrbDecisions );
+	printf( "EVSIDS Decisions     : %lld\n", solver.evsidsDecisions );
+	printf( "LRB Updates          : %lld\n", solver.lrbUpdates );
+	printf( "Branching Switches   : %d\n", solver.branchingSwitches );
+	printf( "Branching Propagations: %llu\n", solver.branchingPropagations );
+	printf( "Active Branching     : %s\n",
+		solver.useLRBBranching ? "LRB" : "EVSIDS"
+	);
 	printf( "Active Clauses       : %zu\n", solver.clauseDB.size() );
 	printf( "----------------------------------------------------\n" );
 

@@ -63,11 +63,26 @@ public:
 		activity = s;
 	}
 
+	void rebuild( const double *s, int variableCount ) {
+		activity = s;
+		heap.clear();
+		pos.assign(variableCount + 1, -1);
+		heap.reserve(variableCount);
+		for ( int variable = 1; variable <= variableCount; variable ++ ) {
+			insert(variable);
+		}
+	}
+
     	bool empty() const { return heap.size() == 0; }
+	int top() const { return heap[0]; }
 
     	bool inHeap( int n ) const { return n < (int)pos.size() && pos[n] >= 0; }
     	
-	void update( int x ) { up(pos[x]); }
+	void update( int x ) {
+		if ( !inHeap(x) ) return;
+		up(pos[x]);
+		down(pos[x]);
+	}
 
     	void insert( int x ) {
         	if ( (int)pos.size() < x + 1 ) pos.resize(x + 1, -1);	
@@ -166,10 +181,25 @@ public:
 	unsigned int lbdStamp = 0;
 	bool vivificationActive = false;
 
-    	double *activity = nullptr;                    // The variables' score for VSIDS
-	double var_inc = 0.0, var_decay = 0.0;                       // Parameter for VSIDS
-	double clause_inc = 0.0, clause_decay = 0.0;                 // Parameters for learnt-clause activity
-    	Heap vsids;                                    // Heap to select variable
+    	double *activity = nullptr;                    // The variables' score for EVSIDS
+	double var_inc = 0.0, var_decay = 0.0;               // Parameters for EVSIDS
+	double *lrbActivity = nullptr;                       // The variables' score for LRB
+	uint32_t *lrbTimestamp = nullptr;                   // Assignment or cancellation conflict stamp
+	uint32_t *lrbParticipated = nullptr;                // Conflict participation in one interval
+	uint32_t *lrbReasoned = nullptr;                    // Reason-side participation in one interval
+	double lrbStepSize = 0.0;                           // LRB moving-average step size
+	double lrbStepSizeDecrease = 0.0;                   // LRB step-size decrement per conflict
+	double lrbMinimumStepSize = 0.0;                    // Minimum LRB step size
+	unsigned long long lrbConflictClock = 0;            // Conflict clock for LRB intervals
+	unsigned long long branchingPropagations = 0;       // Search propagations for switching
+	unsigned long long branchingPhaseBudget = 0;        // Current propagation budget per mode
+	unsigned long long branchingNextSwitch = 0;         // Propagation count for next switch
+	long long lrbDecisions = 0, evsidsDecisions = 0;    // Decisions by each heuristic
+	long long lrbUpdates = 0;                           // Completed LRB interval updates
+	int branchingSwitches = 0;                          // Number of mode switches
+	bool useLRBBranching = true;                        // Active branching heuristic
+	double clause_inc = 0.0, clause_decay = 0.0;       // Parameters for learnt-clause activity
+    	Heap vsids;                                    // Shared variable-order heap
 
 	double processTimeFinal = 0.0;                         // Total elapsed time
 	double propagaTimeFinal = 0.0;                         // Propagation elapsed time
@@ -184,6 +214,10 @@ public:
 		delete [] mark;
 		delete [] lbdMark;
 		delete [] activity;
+		delete [] lrbActivity;
+		delete [] lrbTimestamp;
+		delete [] lrbParticipated;
+		delete [] lrbReasoned;
 		delete [] watched_literals;
 	}
 	
@@ -193,8 +227,14 @@ public:
 	int  add_clause( std::vector<int> &&c );                  // Move an input clause to clause database
 	int  propagate();                                         // BCP (Boolean Constraint Propagation)
     	int  parse( char *filename );                             // Read CNF file
-	int  decide();                                            // Pick decision variable based on VSIDS
-	void update_score( int var, double coeff );               // Update variable activity
+	int  decide();                                            // Pick decision variable by LRB or EVSIDS
+	void initializeBranching();                                // Initialize LRB and switching state
+	void recordLRBAssignment( int variable );                  // Begin one LRB learning interval
+	void recordLRBConflict( const std::vector<int> &variables ); // Record one LRB conflict
+	void updateLRBOnUnassign( int variable );                  // Finish one LRB learning interval
+	void applyLRBLocalityDecay( int variable );                // Penalize stale variables
+	void updateBranchingMode();                                // Switch by propagation budget
+	void update_score( int var, double coeff );               // Update EVSIDS variable activity
 	void bumpClauseActivity( int cref );                       // Update learnt-clause activity
 	int  calculateClauseLBD( const Clause &clause );           // Calculate current LBD
 	void updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD

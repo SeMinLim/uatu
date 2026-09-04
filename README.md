@@ -20,7 +20,7 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 | `cpu/ver_1` | Original compact CDCL solver and reference implementation |
 | `cpu/ver_2` | Improved solver preserving the original search policy, with lower profiling overhead, one-step learned-clause minimization, and deterministic clause reduction |
 | `cpu/ver_3` | Usage-aware learned-clause retention with activity and dynamic LBD updates |
-| `cpu/ver_4` | Corrected Ver. 3 with lightweight preprocessing and model reconstruction |
+| `cpu/ver_4` | Corrected Ver. 3 with preprocessing, reduction-epoch vivification, and LRB/EVSIDS branching |
 
 ## Build and Run
 
