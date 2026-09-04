@@ -1,7 +1,7 @@
 CXX ?= g++
 CPPFLAGS ?=
 CXXFLAGS_COMMON := -std=c++17 -Wall -Wextra -Wpedantic
-CXXFLAGS_RELEASE := -O3 -DNDEBUG -march=native
+CXXFLAGS_RELEASE := -O3 -DNDEBUG
 CXXFLAGS_DEBUG := -O0 -g3
 LDLIBS ?=
 
