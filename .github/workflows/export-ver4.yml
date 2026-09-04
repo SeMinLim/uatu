@@ -1,0 +1,27 @@
+name: Export Current Ver4 Source
+
+on:
+  push:
+    branches:
+      - temp/ver4-lrb-evsids-validation
+    paths:
+      - .github/workflows/export-ver4.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package current source
+        run: |
+          set -euo pipefail
+          tar -czf /tmp/uatu-ver4-current.tar.gz README.md cpu/ver_4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uatu-ver4-current-source
+          path: /tmp/uatu-ver4-current.tar.gz
+          retention-days: 1
