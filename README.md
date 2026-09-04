@@ -7,7 +7,7 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 - First-UIP conflict-driven clause learning
 - Non-chronological backtracking
 - Two-watched-literal Boolean Constraint Propagation with blockers
-- VSIDS-style branching with a max heap
+- Hybrid LRB/EVSIDS branching with propagation-budget switching
 - Phase saving
 - Local-best-based soft rephasing
 - LBD-based learned-clause management
@@ -75,4 +75,5 @@ SAT Competition 2024 is used for heuristic development and parameter tuning. SAT
 - **[Glucose]** G. Audemard and S. Laurent, "Predicting learnt clauses quality in modern SAT solvers," Twenty-first international joint conference on artificial intelligence, 2009.
 - **[Glucose]** G. Audemard and S. Laurent, "GLUCOSE: a solver that predicts learnt clauses quality," SAT Competition, 2009.
 - **[CaDiCaL]** A. Biere, "Cadical, lingeling, plingeling, treengeling and yalsat entering the sat competition 2017," Proceedings of SAT Competition 14 (2017): 316-336.
+- **[LRB]** J. H. Liang, V. Ganesh, P. Poupart, and K. Czarnecki, "Learning rate based branching heuristic for SAT solvers," Theory and Applications of Satisfiability Testing – SAT 2016, 2016.
 - **[Clause Minimization]** N. Sörensson and A. Biere, "Minimizing learned clauses," Theory and Applications of Satisfiability Testing–SAT 2009, 2009.
