@@ -1,0 +1,109 @@
+name: Diagnose Ver4 preprocessing failures
+
+on:
+  push:
+    branches:
+      - temp/ver4-error-diagnosis
+    paths:
+      - .github/workflows/ver4-error-diagnosis.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - index: 0
+            hash: 00fd8ac9acd186a7a78a2c4d92f90de1
+          - index: 69
+            hash: ee5fb3e181571740adb8444bd052dbdc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential xz-utils
+
+      - name: Download and inspect benchmark
+        env:
+          HASH: ${{ matrix.hash }}
+          INDEX: ${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          mkdir -p work logs
+          curl -fL --retry 8 --retry-delay 5 \
+            "https://benchmark-database.de/file/${HASH}?context=cnf" \
+            -o work/input.cnf.xz
+          xz -t work/input.cnf.xz
+          xz -dc work/input.cnf.xz > work/input.cnf
+
+          {
+            echo "index=${INDEX}"
+            echo "hash=${HASH}"
+            echo "compressed_bytes=$(stat -c %s work/input.cnf.xz)"
+            echo "uncompressed_bytes=$(stat -c %s work/input.cnf)"
+            echo "memory_kb=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)"
+            grep -m1 '^p cnf ' work/input.cnf
+          } | tee logs/metadata.txt
+
+          python3 - <<'PY' | tee -a logs/metadata.txt
+          from pathlib import Path
+
+          path = Path('work/input.cnf')
+          variables = 0
+          clauses = 0
+          literals = 0
+          actual_clauses = 0
+          with path.open(errors='replace') as source:
+              for line in source:
+                  stripped = line.strip()
+                  if not stripped or stripped.startswith('c'):
+                      continue
+                  if stripped.startswith('p '):
+                      fields = stripped.split()
+                      variables = int(fields[2])
+                      clauses = int(fields[3])
+                      continue
+                  fields = stripped.split()
+                  literals += sum(token != '0' for token in fields)
+                  actual_clauses += sum(token == '0' for token in fields)
+          print(f'variables={variables}')
+          print(f'declared_clauses={clauses}')
+          print(f'actual_clauses={actual_clauses}')
+          print(f'literals={literals}')
+          print(f'avg_clause_length={literals / actual_clauses if actual_clauses else 0:.6f}')
+          PY
+
+      - name: Reproduce bounded allocation failure
+        env:
+          INDEX: ${{ matrix.index }}
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+
+          set +e
+          /usr/bin/time -v -o logs/time.txt \
+            timeout --signal=TERM --kill-after=5s 300s \
+            bash -lc 'ulimit -v 8388608; exec env UATU_TIMEOUT_SEC=1 cpu/ver_4/obj/uatu_solver work/input.cnf' \
+            > logs/solver.log 2>&1
+          rc=$?
+          set -e
+          echo "exit_code=${rc}" | tee -a logs/metadata.txt
+          tail -80 logs/solver.log || true
+          cat logs/time.txt || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver4-error-diagnosis-${{ matrix.index }}
+          path: logs
+          retention-days: 7
