@@ -98,7 +98,7 @@ void Solver::initialize( void ) {
         processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
 
         var_inc = 1;
-        var_decay = 0.8;
+        var_decay = 0.95;
         clause_inc = 1.0;
         clause_decay = 0.999;
         if ( const char *env = getenv("UATU_CLAUSE_DECAY") ) {
@@ -113,7 +113,6 @@ void Solver::initialize( void ) {
                 if ( parsed > 0 ) reduce_limit = parsed;
         }
 
-        vsids.initialize(activity);
         value[0] = local_best[0] = saved[0] = 0;
         reason[0] = -1;
         level[0] = mark[0] = 0;
@@ -125,8 +124,8 @@ void Solver::initialize( void ) {
                 level[i] = mark[i] = 0;
                 lbdMark[i] = 0;
                 activity[i] = 0.0;
-                vsids.insert(i);
         }
+        initializeBranching();
 }
 
 // Assign 'true' value to a certain literal
@@ -135,6 +134,7 @@ void Solver::assign( int literal, int l, int cref ) {
 	// Assign 'true' if a selected literal has positive value
 	// Assign 'false' if a selected literal has negative value
 	int var = abs(literal);
+	if ( !vivificationActive ) recordLRBAssignment(var);
     	value[var] = literal > 0 ? 1 : -1;
     	level[var] = l;
 	reason[var] = cref;
@@ -237,8 +237,12 @@ int Solver::propagate( void ) {
                                 }
 
                                 assign(firstWatch, level[abs(p)], cref);
-                                if ( vivificationActive ) vivificationPropagations ++;
-                                else unitPropagations ++;
+                                if ( vivificationActive ) {
+                                        vivificationPropagations ++;
+                                } else {
+                                        unitPropagations ++;
+                                        branchingPropagations ++;
+                                }
                         }
                 }
                 ws.resize(out);
@@ -370,26 +374,34 @@ int Solver::parse( char *filename ) {
         return propagate() == -1 ? 0 : 20;
 }
 
-// Pick decision variable based on VSIDS
+// Pick a decision variable with the active branching heuristic
 int Solver::decide( void ) {
-	// Pop VSIDS max-heap until finding an undefined literal
-    	int next = -1;
-	while ( next == -1 || Value(next) != 0 ) {
-        	if ( vsids.empty() ) return 10;
-        	else next = vsids.pop();
-    	}
-	
-	// Save the decision variable's position in trail
-    	decVarInTrail.push_back(trail.size());
-    	
-	// If there's saved one (polarity), use that
+	updateBranchingMode();
+
+	int next = -1;
+	while ( next == -1 ) {
+		if ( vsids.empty() ) return 10;
+
+		const int candidate = vsids.top();
+		if ( Value(candidate) != 0 ) {
+			vsids.pop();
+			continue;
+		}
+
+		if ( useLRBBranching ) {
+			applyLRBLocalityDecay(candidate);
+			if ( vsids.top() != candidate ) continue;
+		}
+		next = vsids.pop();
+	}
+
+	decVarInTrail.push_back(trail.size());
 	if ( saved[next] ) next *= saved[next];
 
-	// Assign
-    	assign(next, decVarInTrail.size(), -1);
-
-	// Parameter update
-    	decides ++;
+	assign(next, static_cast<int>(decVarInTrail.size()), -1);
+	decides ++;
+	if ( useLRBBranching ) lrbDecisions ++;
+	else evsidsDecisions ++;
 
 	return 0;
 }
@@ -404,7 +416,7 @@ void Solver::update_score( int var, double coeff ) {
 	}
 	
 	// Update Heap
-    	if ( vsids.inHeap(var) ) vsids.update(var);
+    	if ( !useLRBBranching && vsids.inHeap(var) ) vsids.update(var);
 }
 
 // Update learnt-clause activity
@@ -491,7 +503,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         const int variable = abs(clause[i]);
                         if ( mark[variable] == time_stamp || level[variable] == 0 ) continue;
 
-                        update_score(variable, 0.5);
+                        update_score(variable, 1.0);
                         bump.push_back(variable);
                         mark[variable] = time_stamp;
 
@@ -555,6 +567,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 learnt.resize(out);
         }
 
+        recordLRBConflict(bump);
+
         ++time_stamp;
         lbd = 0;
         for ( int literal : learnt ) {
@@ -585,11 +599,6 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 backtrackLevel = level[abs(learnt[1])];
         }
 
-        // Original second-stage bump retained after the ablation trial.
-        for ( int variable : bump ) {
-                if ( level[variable] >= backtrackLevel - 1 ) update_score(variable, 1.0);
-        }
-
         return 0;
 }
 
@@ -601,6 +610,7 @@ void Solver::backtrack( int backtrackLevel ) {
         for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
                 const int variable = abs(trail[i]);
 
+                updateLRBOnUnassign(variable);
                 saved[variable] = trail[i] > 0 ? 1 : -1;
                 value[variable] = 0;
                 reason[variable] = -1;
