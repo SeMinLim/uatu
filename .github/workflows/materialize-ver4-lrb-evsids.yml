@@ -1,0 +1,48 @@
+name: Materialize Validated Ver4 LRB EVSIDS
+
+on:
+  push:
+    branches:
+      - temp/ver4-lrb-evsids-validation
+    paths:
+      - .github/workflows/materialize-ver4-lrb-evsids.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize and verify source
+        run: |
+          set -euo pipefail
+          python3 .validation/ver4-lrb-evsids/apply.py
+          python3 .validation/ver4-lrb-evsids/fix_tabs.py
+          make -C cpu/ver_4 clean all \
+            CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          make -C cpu/ver_4 clean
+
+          rm -rf /tmp/ver_4
+          cp -a cpu/ver_4 /tmp/ver_4
+          cp README.md /tmp/README.md
+
+      - name: Create clean materialized branch
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B temp/ver4-lrb-evsids-materialized origin/main
+          rm -rf cpu/ver_4
+          cp -a /tmp/ver_4 cpu/ver_4
+          cp /tmp/README.md README.md
+
+          git config user.name 'Se-Min Lim'
+          git config user.email 'seminl1@kookmin.ac.kr'
+          git add README.md cpu/ver_4
+          git commit -m 'materialize validated Ver4 LRB EVSIDS source'
+          git push --force origin HEAD:temp/ver4-lrb-evsids-materialized
