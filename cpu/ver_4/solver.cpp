@@ -16,56 +16,94 @@
 static inline double timeCheckerCPU( void ) {
         struct rusage ru;
         getrusage(RUSAGE_SELF, &ru);
-        
+
 	return (double)ru.ru_utime.tv_sec + (double)ru.ru_utime.tv_usec / 1000000;
 }
 
-// Functions for reading CNF (Conjunctive Normal Form) file
-uint8_t *read_whitespace( uint8_t *p ) {
-        // ASCII
-	// 9 : Horizontal tab, 	10: Line feed or new line
-	// 11: Vertical tab,	12: Form feed or page
-	// 13: Carriage return	32: Space
-        while ( (*p >= 9 && *p <= 13) || *p == 32 ) ++p;
-        
-	return p;
-}
+// Bounded DIMACS input buffering avoids retaining the whole input in memory.
+struct CNFReader {
+	FILE *file;
+	uint8_t data[64 * 1024];
+	size_t position;
+	size_t length;
+	bool failed;
+};
 
-uint8_t *read_until_new_line( uint8_t *p ) {
-        while ( *p != '\n' ) {
-                if ( *p++ == '\0' ) exit(1);
-        }
-        
-	return ++p;
-}
-
-uint8_t *read_int( uint8_t *p, int *i ) {
-        bool sym = true;
-        *i = 0;
-        
-	p = read_whitespace(p);
-        
-	if ( *p == '-' ) {
-                sym = false;
-                ++ p;
-        }
-        
-	while ( *p >= '0' && *p <= '9' ) {
-                if ( *p == '\0' ) {
-			return p;
-		} else {
-			*i = *i * 10 + *p - '0';
-			++ p;
+static int peekCNF( CNFReader &reader ) {
+	if ( reader.position == reader.length ) {
+		reader.length = fread(reader.data, 1, sizeof(reader.data), reader.file);
+		reader.position = 0;
+		if ( reader.length == 0 ) {
+			reader.failed = ferror(reader.file) != 0;
+			return EOF;
 		}
-        }
-        
-	if ( !sym ) *i = -(*i);
-        
-	return p;
+	}
+	return reader.data[reader.position];
 }
 
+static bool isCNFSpace( int c ) {
+	return c == ' ' || (c >= 9 && c <= 13);
+}
+
+static int skipCNFSpace( CNFReader &reader ) {
+	int c = peekCNF(reader);
+	while ( isCNFSpace(c) ) {
+		reader.position ++;
+		c = peekCNF(reader);
+	}
+	return c;
+}
+
+static bool readCNFInt( CNFReader &reader, int &value ) {
+	int c = skipCNFSpace(reader);
+	const bool negative = c == '-';
+	if ( negative || c == '+' ) {
+		reader.position ++;
+		c = peekCNF(reader);
+	}
+	if ( c < '0' || c > '9' ) return false;
+
+	int magnitude = 0;
+	while ( c >= '0' && c <= '9' ) {
+		const int digit = c - '0';
+		if ( magnitude > (INT_MAX - digit) / 10 ) return false;
+		magnitude = magnitude * 10 + digit;
+		reader.position ++;
+		c = peekCNF(reader);
+	}
+	if ( c != EOF && !isCNFSpace(c) ) return false;
+	value = negative ? -magnitude : magnitude;
+	return !reader.failed;
+}
+
+static int invalidCNF() {
+	fprintf( stderr, "PARSE ERROR: invalid or incomplete DIMACS input\n" );
+	return 30;
+}
 
 //// Solver
+// Release partially initialized arrays as well as successfully parsed formulas.
+Solver::~Solver() {
+	delete[] watched_literals;
+	delete[] value;
+	delete[] local_best;
+	delete[] saved;
+	delete[] reason;
+	delete[] level;
+	delete[] mark;
+	delete[] lbdMark;
+	delete[] activity;
+}
+
+// Each call begins a new marking phase; zero is reserved for unmarked entries.
+void Solver::nextAnalysisStamp() {
+	time_stamp ++;
+	if ( time_stamp == 0 ) {
+		for ( int i = 0; i <= vars; i ++ ) mark[i] = 0;
+		time_stamp = 1;
+	}
+}
+
 // Allocate memory and initialize the values
 void Solver::initialize( void ) {
         value = new int8_t[vars + 1];
@@ -73,12 +111,12 @@ void Solver::initialize( void ) {
         saved = new int8_t[vars + 1];
         reason = new int[vars + 1];
         level = new int[vars + 1];
-        mark = new int[vars + 1];
+        mark = new uint32_t[vars + 1];
         lbdMark = new unsigned int[vars + 1];
         activity = new double[vars + 1];
         watched_literals = new std::vector<WL>[vars * 2 + 1];
 
-        clauseDB.reserve(static_cast<size_t>(clauses) + static_cast<size_t>(clauses / 16));
+        clauseDB.reserve(static_cast<size_t>(clauses));
         trail.reserve(vars);
         decVarInTrail.reserve(vars);
         learnt.reserve(64);
@@ -105,7 +143,7 @@ void Solver::initialize( void ) {
         rephase_limit = 100000;
         reduce_limit = 8192;
 
-        vsids.initialize(activity);
+        vsids.initialize(activity, vars);
         value[0] = local_best[0] = saved[0] = 0;
         reason[0] = -1;
         level[0] = mark[0] = 0;
@@ -136,10 +174,10 @@ void Solver::assign( int literal, int l, int cref ) {
 // Add a clause to the database
 int Solver::add_clause( std::vector<int> &c ) {
     	clauseDB.push_back(Clause(c.size()));
-    	
+
 	int id = clauseDB.size() - 1;
     	for ( int i = 0; i < (int)c.size(); i ++ ) clauseDB[id][i] = c[i];
-        
+
 	// Two watched literals
 	// We only make the literals 'true'
 	// Then our only concern is the opposite ones, -c[0] and -c[1]
@@ -225,78 +263,98 @@ int Solver::propagate( void ) {
         return -1;
 }
 
-// Read CNF file
+// Read CNF file. Always close the stream, including on allocation failure.
 int Solver::parse( char *filename ) {
-        FILE *file = fopen(filename, "rb");
-        if ( !file ) {
-                fprintf(stderr, "failed to open '%s': %s\n", filename, strerror(errno));
-                return 30;
-        }
-        if ( fseek(file, 0, SEEK_END) != 0 ) {
-                fclose(file);
-                return 30;
-        }
-        const long end = ftell(file);
-        if ( end < 0 ) {
-                fclose(file);
-                return 30;
-        }
-        rewind(file);
+	FILE *file = fopen(filename, "rb");
+	if ( !file ) {
+		fprintf( stderr, "failed to open '%s': %s\n", filename, strerror(errno) );
+		return 30;
+	}
 
-        const size_t length = static_cast<size_t>(end);
-        std::vector<uint8_t> data(length + 1);
-        if ( fread(data.data(), sizeof(uint8_t), length, file) != length ) {
-                fclose(file);
-                return 30;
-        }
-        fclose(file);
-        data[length] = '\0';
-        uint8_t *cursor = data.data();
+	int result = 30;
+	try {
+		result = parseStream(file);
+	} catch ( ... ) {
+		fclose(file);
+		throw;
+	}
+	fclose(file);
+	return result;
+}
 
-        std::vector<int> buffer;
-        buffer.reserve(16);
+int Solver::parseStream( FILE *file ) {
+	if ( value != nullptr ) return invalidCNF();
+	CNFReader reader{};
+	reader.file = file;
+	std::vector<int> buffer;
+	buffer.reserve(16);
+	bool haveHeader = false;
+	bool contradictory = false;
+	int parsedClauses = 0;
 
-        while ( *cursor != '\0' ) {
-                cursor = read_whitespace(cursor);
-                if ( *cursor == '\0' ) break;
+	while ( true ) {
+		int c = skipCNFSpace(reader);
+		if ( c == EOF ) break;
+		if ( c == 'c' ) {
+			while ( c != EOF && c != '\n' ) {
+				reader.position ++;
+				c = peekCNF(reader);
+			}
+			continue;
+		}
 
-                if ( *cursor == 'c' ) {
-                        cursor = read_until_new_line(cursor);
-                } else if ( *cursor == 'p' ) {
-                        if ( *(cursor + 1) == ' ' && *(cursor + 2) == 'c' &&
-                             *(cursor + 3) == 'n' && *(cursor + 4) == 'f' ) {
-                                cursor += 5;
-                                cursor = read_int(cursor, &vars);
-                                cursor = read_int(cursor, &clauses);
-                                initialize();
-                        } else {
-                                fprintf(stderr, "PARSE ERROR: unexpected header\n");
-                                return 30;
-                        }
-                } else {
-                        int32_t literal = 0;
-                        cursor = read_int(cursor, &literal);
-                        if ( literal != 0 ) {
-                                if ( *cursor == '\0' ) {
-                                        fprintf(stderr, "PARSE ERROR: unexpected EOF\n");
-                                        return 30;
-                                }
-                                buffer.push_back(literal);
-                        } else {
-                                if ( buffer.empty() ) return 20;
-                                if ( buffer.size() == 1 ) {
-                                        if ( Value(buffer[0]) == -1 ) return 20;
-                                        if ( Value(buffer[0]) == 0 ) assign(buffer[0], 0, -1);
-                                } else {
-                                        add_clause(buffer);
-                                }
-                                buffer.clear();
-                        }
-                }
-        }
+		if ( c == 'p' ) {
+			if ( haveHeader ) return invalidCNF();
+			reader.position ++;
+			if ( !isCNFSpace(peekCNF(reader)) ) return invalidCNF();
+			skipCNFSpace(reader);
+			const char format[] = "cnf";
+			for ( int i = 0; i < 3; i ++ ) {
+				if ( peekCNF(reader) != format[i] ) return invalidCNF();
+				reader.position ++;
+			}
+			if ( !isCNFSpace(peekCNF(reader)) ||
+			     !readCNFInt(reader, vars) || !readCNFInt(reader, clauses) ) {
+				return invalidCNF();
+			}
+			// Literal indices and both watcher polarities must fit signed int.
+			if ( vars < 0 || vars > (INT_MAX - 1) / 2 || clauses < 0 ) {
+				return invalidCNF();
+			}
+			initialize();
+			haveHeader = true;
+			continue;
+		}
 
-        origin_clauses = static_cast<int>(clauseDB.size());
-        return propagate() == -1 ? 0 : 20;
+		if ( !haveHeader ) return invalidCNF();
+		int literal = 0;
+		if ( !readCNFInt(reader, literal) ) return invalidCNF();
+		if ( literal != 0 ) {
+			if ( literal > vars || literal < -vars ) return invalidCNF();
+			buffer.push_back(literal);
+		} else {
+			if ( parsedClauses >= clauses ) return invalidCNF();
+			parsedClauses ++;
+			if ( buffer.empty() ) {
+				contradictory = true;
+			} else if ( buffer.size() == 1 ) {
+				if ( Value(buffer[0]) == -1 ) contradictory = true;
+				else if ( Value(buffer[0]) == 0 ) assign(buffer[0], 0, -1);
+			} else {
+				add_clause(buffer);
+			}
+			buffer.clear();
+		}
+	}
+
+	if ( reader.failed ) {
+		fprintf( stderr, "failed to read DIMACS input\n" );
+		return 30;
+	}
+	if ( !haveHeader || !buffer.empty() || parsedClauses != clauses ) return invalidCNF();
+	origin_clauses = static_cast<int>(clauseDB.size());
+	if ( contradictory ) return 20;
+	return propagate() == -1 ? 0 : 20;
 }
 
 // Pick decision variable based on VSIDS
@@ -307,10 +365,10 @@ int Solver::decide( void ) {
         	if ( vsids.empty() ) return 10;
         	else next = vsids.pop();
     	}
-	
+
 	// Save the decision variable's position in trail
     	decVarInTrail.push_back(trail.size());
-    	
+
 	// If there's saved one (polarity), use that
 	if ( saved[next] ) next *= saved[next];
 
@@ -331,7 +389,7 @@ void Solver::update_score( int var, double coeff ) {
 		for ( int i = 1; i <= vars; i ++ ) activity[i] *= 1e-100;
 		var_inc *= 1e-100;
 	}
-	
+
 	// Update Heap
     	if ( vsids.inHeap(var) ) vsids.update(var);
 }
@@ -389,7 +447,7 @@ void Solver::updateClauseQuality( int cref ) {
 
 // Conflict analysis
 int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
-        ++time_stamp;
+        nextAnalysisStamp();
         learnt.clear();
 
         if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
@@ -454,8 +512,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
         // Non-recursive, one-step reason minimization.
         if ( learnt.size() > 1 ) {
-                ++time_stamp;
-                const int membershipStamp = time_stamp;
+                nextAnalysisStamp();
+                const uint32_t membershipStamp = time_stamp;
                 for ( int literal : learnt ) mark[abs(literal)] = membershipStamp;
 
                 int out = 1;
@@ -484,7 +542,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 learnt.resize(out);
         }
 
-        ++time_stamp;
+        nextAnalysisStamp();
         lbd = 0;
         for ( int literal : learnt ) {
                 const int decisionLevel = level[abs(literal)];
@@ -564,8 +622,13 @@ void Solver::rephase() {
 		for ( int i = 1; i <= vars; i ++ ) saved[i] = -local_best[i];
 	}
 
-	rephase_inc *= 2;
-	rephase_limit = conflicts + rephase_inc;
+	if ( rephase_inc <= UINT64_MAX / 2 ) rephase_inc *= 2;
+	else rephase_inc = UINT64_MAX;
+	if ( conflicts <= UINT64_MAX - rephase_inc ) {
+		rephase_limit = conflicts + rephase_inc;
+	} else {
+		rephase_limit = UINT64_MAX;
+	}
 	rephases ++;
 }
 
@@ -574,7 +637,8 @@ void Solver::reduce() {
         // Reduce at the root; restart and rephase also perform root backtracks.
         backtrack(0);
         reduces = 0;
-        reduce_limit += 512;
+        if ( reduce_limit <= UINT64_MAX - 512 ) reduce_limit += 512;
+        else reduce_limit = UINT64_MAX;
         ++reductionRuns;
 
         const int oldSize = static_cast<int>(clauseDB.size());
@@ -609,7 +673,7 @@ void Solver::reduce() {
         std::vector<unsigned char> erase(oldSize, 0);
         const size_t deleteCount = candidates.size() / 2;
         for ( size_t i = 0; i < deleteCount; i ++ ) erase[candidates[i]] = 1;
-        deletedClauses += static_cast<long long>(deleteCount);
+        deletedClauses += static_cast<uint64_t>(deleteCount);
 
         int newSize = origin_clauses;
         for ( int i = 0; i < origin_clauses; i ++ ) reduceMap[i] = i;
