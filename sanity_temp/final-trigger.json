@@ -1,0 +1,1 @@
+{"request":"retry full 100-instance sanity check and paired MiniSAT PAR-2 comparison","solver_commit":"60e2f03e533d6d1c16995f119a876bae140bbdc5","paired_run":33957925983,"sanitizer_run":33959442043,"required_cases":100,"timeout_sec":1000,"penalty_sec":2000,"main_modified":false}
