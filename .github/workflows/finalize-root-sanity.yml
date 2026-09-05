@@ -1,0 +1,105 @@
+name: Final Ver4 Root Sanity Evidence
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - sanity_temp/final-trigger.json
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      dashboard: ${{ steps.summarize.outputs.dashboard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: root-sanity-case-*
+          path: paired
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: isolated-sanitizer-*
+          path: rechecks
+          run-id: 33959442043
+          github-token: ${{ github.token }}
+      - name: Independently recompute and check all 100 cases
+        id: summarize
+        run: |
+          mkdir -p final
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          with Path('final/compute.log').open('w') as log:
+              measured = subprocess.run(['python3', 'sanity_temp/finalize.py'], stdout=log, stderr=subprocess.STDOUT)
+              counters = subprocess.run(['python3', 'sanity_temp/check_counters.py'], stdout=log, stderr=subprocess.STDOUT)
+          if measured.returncode or counters.returncode:
+              dashboard = {'verification_complete': False,
+                           'error': Path('final/compute.log').read_text(errors='replace')[-7000:]}
+          else:
+              summary = json.loads(Path('final/decision.json').read_text())
+              counter_check = json.loads(Path('final/counter_check.json').read_text())
+              dashboard = {key: value for key, value in summary.items()
+                           if key not in ('runtime_errors', 'sanitizer_errors')}
+              dashboard['verification_complete'] = True
+              dashboard['runtime_error_count'] = len(summary['runtime_errors'])
+              dashboard['runtime_error_examples'] = summary['runtime_errors'][:8]
+              dashboard['sanitizer_error_count'] = len(summary['sanitizer_errors'])
+              dashboard['sanitizer_error_examples'] = summary['sanitizer_errors'][:8]
+              dashboard['counter_check'] = counter_check
+              heads = []
+              for root, filename in [('paired', 'result.json'), ('rechecks', 'sanitizer_result.json')]:
+                  for path in Path(root).rglob(filename):
+                      case = json.loads(path.read_text())
+                      rows = case['results'] if root == 'paired' else [case['result']]
+                      for row in rows:
+                          if row['status'] not in ('sat', 'unsat', 'timeout') and len(heads) < 8:
+                              log = path.parent / (row['solver'] + '.log')
+                              heads.append({'index': case['index'], 'solver': row['solver'], 'status': row['status'],
+                                            'validation_error': row.get('validation_error'),
+                                            'log_head': log.read_text(errors='replace')[:2500]})
+              dashboard['diagnostic_heads'] = heads
+          Path('final/dashboard.json').write_text(json.dumps(dashboard, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('dashboard=' + json.dumps(dashboard, separators=(',', ':')) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: root-sanity-verified-final
+          path: final
+          if-no-files-found: error
+          retention-days: 7
+  report:
+    needs: compute
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Print verified measured summary
+        env:
+          DASHBOARD: ${{ needs.compute.outputs.dashboard }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          text = os.environ.get('DASHBOARD', '')
+          if not text:
+              raise RuntimeError('Upstream evidence collection failed; no complete result is available')
+          result = json.loads(text)
+          print('VERIFIED_ROOT_SANITY_RESULT_BEGIN')
+          print(json.dumps(result, indent=2))
+          print('VERIFIED_ROOT_SANITY_RESULT_END')
+          if not result.get('verification_complete'):
+              raise RuntimeError('100-case result verification did not pass')
+          PY
