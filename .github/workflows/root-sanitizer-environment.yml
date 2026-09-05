@@ -1,0 +1,58 @@
+name: Isolate Ver4 Sanitizer Environment
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/root-sanitizer-environment.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-binaries
+          path: bin
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - name: Check clean sanitizer process limits and runtime
+        run: |
+          set -euo pipefail
+          chmod +x bin/*
+          ulimit -a
+          cat /proc/self/limits
+          cat /proc/sys/vm/overcommit_memory
+          printf 'p cnf 1 1\n1 0\n' > tiny.cnf
+          python3 - <<'PY'
+          import os, resource, subprocess
+          from pathlib import Path
+          env = os.environ.copy()
+          env['ASAN_OPTIONS'] = 'detect_leaks=0:halt_on_error=1:abort_on_error=1'
+          env['UBSAN_OPTIONS'] = 'halt_on_error=1:print_stacktrace=1'
+          print('PARENT_LIMIT', resource.getrlimit(resource.RLIMIT_AS), flush=True)
+          cp = subprocess.run(['./bin/ver4-sanitize', 'tiny.cnf'], env=env, capture_output=True, text=True, timeout=10)
+          print('DIRECT_EXIT', cp.returncode, flush=True)
+          print(cp.stdout, cp.stderr, flush=True)
+          low, high = resource.getrlimit(resource.RLIMIT_AS)
+          if high == resource.RLIM_INFINITY:
+              resource.setrlimit(resource.RLIMIT_AS, (resource.RLIM_INFINITY, high))
+          print('UNLIMITED_PARENT', resource.getrlimit(resource.RLIMIT_AS), flush=True)
+          cp = subprocess.run(['./bin/ver4-sanitize', 'tiny.cnf'], env=env, capture_output=True, text=True, timeout=10)
+          print('UNLIMITED_EXIT', cp.returncode, flush=True)
+          print(cp.stdout, cp.stderr, flush=True)
+          PY
+      - name: Check same original CNF without release-runner limits
+        run: |
+          curl -fL --retry 4 'https://benchmark-database.de/file/546f8e069aa450002a30c9c47538fe95?context=cnf' -o original.cnf.xz
+          xz -dc original.cnf.xz > original.cnf
+          set +e
+          ASAN_OPTIONS='detect_leaks=0:halt_on_error=1:abort_on_error=1' \
+          UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1' UATU_TIMEOUT_SEC=30 \
+            timeout -s KILL 35s ./bin/ver4-sanitize original.cnf > sanitizer-direct.log 2>&1
+          echo "DIRECT_BENCHMARK_EXIT=$?"
+          head -100 sanitizer-direct.log
+          exit 0
