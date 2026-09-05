@@ -1,0 +1,96 @@
+name: Recheck Root Ver4 Counter Overflow
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/root-counter-long-recheck.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        index: [34, 39]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - name: Build unchanged solver with UBSan
+        run: |
+          set -euo pipefail
+          git diff --exit-code 60e2f03e533d6d1c16995f119a876bae140bbdc5 HEAD -- cpu/ver_4
+          mkdir -p work diagnostic
+          g++ -std=c++17 -O2 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=undefined -fno-sanitize-recover=all -DUATU_PROFILE_BCP=0 \
+            cpu/ver_4/solver.cpp cpu/ver_4/main.cpp -o work/ver4-ubsan
+      - name: Run original input without injected counter values
+        env:
+          CASE_INDEX: ${{ matrix.index }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, signal, subprocess, time
+          from pathlib import Path
+          index = int(os.environ['CASE_INDEX'])
+          row = json.loads(Path('prepared/manifest.json').read_text())[index]
+          assert row['index'] == index
+          archive = Path('work/input.cnf.xz')
+          cnf = Path('work/input.cnf')
+          subprocess.run(['curl', '-fL', '--retry', '3', '--connect-timeout', '30', '--max-time', '300', row['url'], '-o', str(archive)], check=True, timeout=400)
+          with cnf.open('wb') as output:
+              subprocess.run(['xz', '-dc', str(archive)], stdout=output, check=True, timeout=300)
+          digest = hashlib.sha256()
+          with cnf.open('rb') as source:
+              for chunk in iter(lambda: source.read(4 * 1024**2), b''):
+                  digest.update(chunk)
+          environment = os.environ.copy()
+          for key in tuple(environment):
+              if key.startswith('UATU_'):
+                  environment.pop(key)
+          environment['UATU_TIMEOUT_SEC'] = '1000'
+          environment['UBSAN_OPTIONS'] = 'halt_on_error=1:print_stacktrace=1'
+          command = ['/usr/bin/time', '-q', '-f', '%e,%U,%S,%M,%x', '-o', 'diagnostic/timing.txt',
+                     '/usr/bin/prlimit', '--as=12884901888:12884901888', '--', 'work/ver4-ubsan', str(cnf)]
+          started = time.monotonic()
+          timed_out = False
+          with Path('diagnostic/solver.log').open('wb') as output:
+              process = subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+              try:
+                  process.wait(timeout=1000)
+              except subprocess.TimeoutExpired:
+                  timed_out = True
+                  os.killpg(process.pid, signal.SIGKILL)
+                  process.wait()
+          text = Path('diagnostic/solver.log').read_text(errors='replace')
+          metadata = {'index': index, 'hash': row['hash'], 'filename': row['filename'],
+                      'cnf_sha256': digest.hexdigest(), 'cnf_bytes': cnf.stat().st_size,
+                      'commit': '60e2f03e533d6d1c16995f119a876bae140bbdc5',
+                      'diagnostic_only_not_PAR2': True, 'injected_counter_values': False,
+                      'timeout_sec': 1000, 'observed_wall_sec': time.monotonic() - started,
+                      'exit_code': process.returncode, 'timed_out': timed_out,
+                      'signed_overflow_detected': 'signed integer overflow' in text,
+                      'other_undefined_behavior': 'runtime error:' in text and 'signed integer overflow' not in text}
+          Path('diagnostic/metadata.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          print('REAL_INPUT_COUNTER_RECHECK_BEGIN')
+          print(json.dumps(metadata, indent=2))
+          print(text[-10000:])
+          print('REAL_INPUT_COUNTER_RECHECK_END')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: root-counter-recheck-${{ matrix.index }}
+          path: diagnostic
+          if-no-files-found: error
+          retention-days: 7
