@@ -7,11 +7,11 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 - First-UIP conflict-driven clause learning
 - Non-chronological backtracking
 - Two-watched-literal Boolean Constraint Propagation with blockers
-- Hybrid LRB/EVSIDS branching with propagation-budget switching
+- VSIDS branching
 - Phase saving
-- Local-best-based soft rephasing
+- Local-best-based rephasing with root backtracking in Ver. 4
 - LBD-based learned-clause management
-- Recent-LBD window reset with deep-search preservation
+- LBD-triggered root-level restarts in Ver. 4
 
 ## Versions
 
@@ -20,7 +20,7 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 | `cpu/ver_1` | Original compact CDCL solver and reference implementation |
 | `cpu/ver_2` | Improved solver preserving the original search policy, with lower profiling overhead, one-step learned-clause minimization, and deterministic clause reduction |
 | `cpu/ver_3` | Usage-aware learned-clause retention with activity and dynamic LBD updates |
-| `cpu/ver_4` | Corrected Ver. 3 with preprocessing, reduction-epoch vivification, and LRB/EVSIDS branching |
+| `cpu/ver_4` | Corrected Ver. 3 with root-level restarts and rephasing; replaces the previous preprocessing/vivification/LRB-EVSIDS version |
 
 ## Build and Run
 

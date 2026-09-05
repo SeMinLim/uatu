@@ -8,8 +8,8 @@ LDLIBS ?=
 TARGET := obj/uatu_solver
 PROFILE_TARGET := obj/uatu_solver_profile
 DEBUG_TARGET := obj/uatu_solver_debug
-SOURCES := solver.cpp preprocess.cpp vivify.cpp branching.cpp main.cpp
-HEADERS := solver.h preprocess.h
+SOURCES := solver.cpp main.cpp
+HEADERS := solver.h
 
 .PHONY: all release profile debug clean run run-profile run-debug
 

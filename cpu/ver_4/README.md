@@ -1,12 +1,16 @@
 # Uatu Ver. 4
 
-Corrected Ver. 3 with preprocessing, reduction-epoch vivification, and LRB/EVSIDS branching.
+Based on `cpu/ver_3`, with root-level restart and rephase semantics restored.
 
-## Architecture
+- First-UIP CDCL, non-chronological backjumping, two-watched-literal BCP, VSIDS, phase saving, and one-step clause minimization.
+- Usage-aware learned-clause retention and dynamic LBD, unchanged from Ver. 3.
+- The existing LBD trigger now calls `restart()`: backtrack to level 0, retain learned clauses and saved phases, and clear the recent-LBD window.
+- `rephase()` backtracks to level 0 **before** installing phase targets, so ordinary phase saving cannot overwrite them. Ver. 3's phase-selection sequence and intervals are retained; this is not a full CaDiCaL port.
+- Clause reduction still runs at level 0 and protects root reason clauses. Ordinary conflict backjumps retain their analyzed target level.
 
-- Maintains LRB and canonical EVSIDS scores concurrently and alternates the active heuristic by search-propagation budget without changing the current trail.
-- Uses LRB conflict-participation and reason-side rewards with exponential recency updates and locality decay.
-- Uses canonical EVSIDS with one bump per conflict participant and a decay factor of 0.95.
-- Normalizes clauses and performs bounded unit propagation, subsumption, self-subsuming resolution, and variable elimination before CDCL search.
-- Runs bounded clause vivification whenever the learned-clause database is reduced.
-- Preserves Uatu's soft rephase and recent-LBD reset behavior; only clause reduction performs `backtrack(0)`.
+The previous Ver. 4 preprocessing, vivification, and LRB/EVSIDS implementation is removed. `cpu/ver_3` is unchanged.
+
+```bash
+make
+make run CNF=/path/to/instance.cnf TIMEOUT=1000
+```

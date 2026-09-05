@@ -24,7 +24,7 @@ static inline double timeCheckerCPU( void ) {
 uint8_t *read_whitespace( uint8_t *p ) {
         // ASCII
 	// 9 : Horizontal tab, 	10: Line feed or new line
-	// 11: Vertical tab,	12: Form feed or new page
+	// 11: Vertical tab,	12: Form feed or page
 	// 13: Carriage return	32: Space
         while ( (*p >= 9 && *p <= 13) || *p == 32 ) ++p;
         
@@ -84,21 +84,17 @@ void Solver::initialize( void ) {
         learnt.reserve(64);
 
         conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
-        lbdResets = rephases = reduces = 0;
-        reductionRuns = vivificationRuns = 0;
+        restarts = rephases = reduces = 0;
+        reductionRuns = 0;
         deletedClauses = minimizedLiterals = 0;
         clauseActivityBumps = dynamicLBDUpdates = 0;
-        vivificationCandidates = vivifiedClauses = vivifiedLiterals = 0;
-        vivificationUnits = vivificationBCPCalls = 0;
-        vivificationPropagations = 0;
         threshold = propagated = time_stamp = 0;
         lbdStamp = 0;
-        vivificationActive = false;
         fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
         processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
 
         var_inc = 1;
-        var_decay = 0.95;
+        var_decay = 0.8;
         clause_inc = 1.0;
         clause_decay = 0.999;
         if ( const char *env = getenv("UATU_CLAUSE_DECAY") ) {
@@ -108,11 +104,8 @@ void Solver::initialize( void ) {
         rephase_inc = 100000;
         rephase_limit = 100000;
         reduce_limit = 8192;
-        if ( const char *env = getenv("UATU_REDUCE_INITIAL") ) {
-                const int parsed = atoi(env);
-                if ( parsed > 0 ) reduce_limit = parsed;
-        }
 
+        vsids.initialize(activity);
         value[0] = local_best[0] = saved[0] = 0;
         reason[0] = -1;
         level[0] = mark[0] = 0;
@@ -124,8 +117,8 @@ void Solver::initialize( void ) {
                 level[i] = mark[i] = 0;
                 lbdMark[i] = 0;
                 activity[i] = 0.0;
+                vsids.insert(i);
         }
-        initializeBranching();
 }
 
 // Assign 'true' value to a certain literal
@@ -134,7 +127,6 @@ void Solver::assign( int literal, int l, int cref ) {
 	// Assign 'true' if a selected literal has positive value
 	// Assign 'false' if a selected literal has negative value
 	int var = abs(literal);
-	if ( !vivificationActive ) recordLRBAssignment(var);
     	value[var] = literal > 0 ? 1 : -1;
     	level[var] = l;
 	reason[var] = cref;
@@ -158,25 +150,9 @@ int Solver::add_clause( std::vector<int> &c ) {
     	return id;
 }
 
-// Move an input clause to the database without copying its literal buffer
-int Solver::add_clause( std::vector<int> &&c ) {
-	const int first = c[0];
-	const int second = c[1];
-	clauseDB.push_back(Clause(0));
-
-	int id = clauseDB.size() - 1;
-	clauseDB[id].literals = std::move(c);
-
-	WatchedLiterals(-first).push_back(WL(id, second));
-	WatchedLiterals(-second).push_back(WL(id, first));
-
-	return id;
-}
-
 // BCP (Boolean Constraint Propagation)
 int Solver::propagate( void ) {
-        if ( vivificationActive ) vivificationBCPCalls ++;
-        else bcpFunctionCalls ++;
+        ++bcpFunctionCalls;
 #if UATU_PROFILE_BCP
         using BcpClock = std::chrono::steady_clock;
         const auto bcpStart = BcpClock::now();
@@ -237,12 +213,7 @@ int Solver::propagate( void ) {
                                 }
 
                                 assign(firstWatch, level[abs(p)], cref);
-                                if ( vivificationActive ) {
-                                        vivificationPropagations ++;
-                                } else {
-                                        unitPropagations ++;
-                                        branchingPropagations ++;
-                                }
+                                ++unitPropagations;
                         }
                 }
                 ws.resize(out);
@@ -254,11 +225,11 @@ int Solver::propagate( void ) {
         return -1;
 }
 
-// Read and preprocess a CNF file
+// Read CNF file
 int Solver::parse( char *filename ) {
         FILE *file = fopen(filename, "rb");
         if ( !file ) {
-                fprintf( stderr, "failed to open '%s': %s\n", filename, strerror(errno) );
+                fprintf(stderr, "failed to open '%s': %s\n", filename, strerror(errno));
                 return 30;
         }
         if ( fseek(file, 0, SEEK_END) != 0 ) {
@@ -282,126 +253,72 @@ int Solver::parse( char *filename ) {
         data[length] = '\0';
         uint8_t *cursor = data.data();
 
-        bool headerSeen = false;
-        int declaredClauses = 0;
-        std::vector<std::vector<int>> formula;
         std::vector<int> buffer;
         buffer.reserve(16);
 
         while ( *cursor != '\0' ) {
                 cursor = read_whitespace(cursor);
-                if ( *cursor == '\0' || *cursor == '%' ) break;
+                if ( *cursor == '\0' ) break;
 
                 if ( *cursor == 'c' ) {
-                        while ( *cursor != '\n' && *cursor != '\0' ) cursor ++;
-                        if ( *cursor == '\n' ) cursor ++;
+                        cursor = read_until_new_line(cursor);
                 } else if ( *cursor == 'p' ) {
                         if ( *(cursor + 1) == ' ' && *(cursor + 2) == 'c' &&
                              *(cursor + 3) == 'n' && *(cursor + 4) == 'f' ) {
                                 cursor += 5;
                                 cursor = read_int(cursor, &vars);
-                                cursor = read_int(cursor, &declaredClauses);
-                                if ( vars <= 0 || declaredClauses < 0 ) {
-                                        fprintf( stderr, "PARSE ERROR: invalid header\n" );
-                                        return 30;
-                                }
-                                formula.reserve(static_cast<size_t>(declaredClauses));
-                                headerSeen = true;
+                                cursor = read_int(cursor, &clauses);
+                                initialize();
                         } else {
-                                fprintf( stderr, "PARSE ERROR: unexpected header\n" );
+                                fprintf(stderr, "PARSE ERROR: unexpected header\n");
                                 return 30;
                         }
                 } else {
-                        if ( !headerSeen ) {
-                                fprintf( stderr, "PARSE ERROR: clause before header\n" );
-                                return 30;
-                        }
                         int32_t literal = 0;
-                        uint8_t *next = read_int(cursor, &literal);
-                        if ( next == cursor ) {
-                                fprintf( stderr, "PARSE ERROR: invalid literal\n" );
-                                return 30;
-                        }
-                        cursor = next;
+                        cursor = read_int(cursor, &literal);
                         if ( literal != 0 ) {
+                                if ( *cursor == '\0' ) {
+                                        fprintf(stderr, "PARSE ERROR: unexpected EOF\n");
+                                        return 30;
+                                }
                                 buffer.push_back(literal);
                         } else {
-                                formula.push_back(buffer);
+                                if ( buffer.empty() ) return 20;
+                                if ( buffer.size() == 1 ) {
+                                        if ( Value(buffer[0]) == -1 ) return 20;
+                                        if ( Value(buffer[0]) == 0 ) assign(buffer[0], 0, -1);
+                                } else {
+                                        add_clause(buffer);
+                                }
                                 buffer.clear();
                         }
                 }
         }
 
-        if ( !headerSeen || !buffer.empty() ) {
-                fprintf( stderr, "PARSE ERROR: incomplete CNF\n" );
-                return 30;
-        }
-
-        // Parsing is complete, so release the raw DIMACS image before preprocessing.
-        std::vector<uint8_t>().swap(data);
-
-        const double preprocessingStart = timeCheckerCPU();
-        PreprocessResult preprocessResult;
-        const int preprocessStatus = preprocessFormula(vars, formula, preprocessResult);
-        const double preprocessElapsed = timeCheckerCPU() - preprocessingStart;
-
-        clauses = static_cast<int>(formula.size());
-        initialize();
-        preprocessing = std::move(preprocessResult);
-        preprocessingTime = preprocessElapsed;
-
-        if ( preprocessStatus != 0 ) return preprocessStatus;
-
-        for ( int variable = 1; variable <= vars; variable ++ ) {
-                const int8_t assigned = preprocessing.rootValues[variable];
-                if ( assigned != 0 ) {
-                        assign(assigned > 0 ? variable : -variable, 0, -1);
-                }
-        }
-
-        for ( std::vector<int> &clause : formula ) {
-                if ( clause.empty() ) return 20;
-                if ( clause.size() == 1 ) {
-                        if ( Value(clause[0]) == -1 ) return 20;
-                        if ( Value(clause[0]) == 0 ) assign(clause[0], 0, -1);
-                } else {
-                        add_clause(std::move(clause));
-                }
-        }
-        std::vector<std::vector<int>>().swap(formula);
-
         origin_clauses = static_cast<int>(clauseDB.size());
         return propagate() == -1 ? 0 : 20;
 }
 
-// Pick a decision variable with the active branching heuristic
+// Pick decision variable based on VSIDS
 int Solver::decide( void ) {
-	updateBranchingMode();
-
-	int next = -1;
-	while ( next == -1 ) {
-		if ( vsids.empty() ) return 10;
-
-		const int candidate = vsids.top();
-		if ( Value(candidate) != 0 ) {
-			vsids.pop();
-			continue;
-		}
-
-		if ( useLRBBranching ) {
-			applyLRBLocalityDecay(candidate);
-			if ( vsids.top() != candidate ) continue;
-		}
-		next = vsids.pop();
-	}
-
-	decVarInTrail.push_back(trail.size());
+	// Pop VSIDS max-heap until finding an undefined literal
+    	int next = -1;
+	while ( next == -1 || Value(next) != 0 ) {
+        	if ( vsids.empty() ) return 10;
+        	else next = vsids.pop();
+    	}
+	
+	// Save the decision variable's position in trail
+    	decVarInTrail.push_back(trail.size());
+    	
+	// If there's saved one (polarity), use that
 	if ( saved[next] ) next *= saved[next];
 
-	assign(next, static_cast<int>(decVarInTrail.size()), -1);
-	decides ++;
-	if ( useLRBBranching ) lrbDecisions ++;
-	else evsidsDecisions ++;
+	// Assign
+    	assign(next, decVarInTrail.size(), -1);
+
+	// Parameter update
+    	decides ++;
 
 	return 0;
 }
@@ -416,7 +333,7 @@ void Solver::update_score( int var, double coeff ) {
 	}
 	
 	// Update Heap
-    	if ( !useLRBBranching && vsids.inHeap(var) ) vsids.update(var);
+    	if ( vsids.inHeap(var) ) vsids.update(var);
 }
 
 // Update learnt-clause activity
@@ -503,7 +420,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                         const int variable = abs(clause[i]);
                         if ( mark[variable] == time_stamp || level[variable] == 0 ) continue;
 
-                        update_score(variable, 1.0);
+                        update_score(variable, 0.5);
                         bump.push_back(variable);
                         mark[variable] = time_stamp;
 
@@ -567,8 +484,6 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 learnt.resize(out);
         }
 
-        recordLRBConflict(bump);
-
         ++time_stamp;
         lbd = 0;
         for ( int literal : learnt ) {
@@ -599,6 +514,11 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
                 backtrackLevel = level[abs(learnt[1])];
         }
 
+        // Original second-stage bump retained after the ablation trial.
+        for ( int variable : bump ) {
+                if ( level[variable] >= backtrackLevel - 1 ) update_score(variable, 1.0);
+        }
+
         return 0;
 }
 
@@ -610,7 +530,6 @@ void Solver::backtrack( int backtrackLevel ) {
         for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
                 const int variable = abs(trail[i]);
 
-                updateLRBOnUnassign(variable);
                 saved[variable] = trail[i] > 0 ? 1 : -1;
                 value[variable] = 0;
                 reason[variable] = -1;
@@ -624,39 +543,38 @@ void Solver::backtrack( int backtrackLevel ) {
         decVarInTrail.resize(backtrackLevel);
 }
 
-// Reset recent LBD statistics
-void Solver::resetRecentLBD() {
-        fast_lbd_sum = 0;
-        lbd_queue_size = 0;
-        lbd_queue_pos = 0;
-        ++lbdResets;
+// Restart from the root while retaining learnt clauses and saved phases.
+void Solver::restart() {
+	backtrack(0);
+	fast_lbd_sum = 0;
+	lbd_queue_size = 0;
+	lbd_queue_pos = 0;
+	restarts ++;
 }
 
-// Rephase
+// Rephase from the root.
 void Solver::rephase() {
-        // Exact original soft-rephase sequence: preserve the current trail.
-        if ( rephases / 2 == 1 ) {
-                for ( int i = 1; i <= vars; i ++ ) saved[i] = local_best[i];
-        } else {
-                for ( int i = 1; i <= vars; i ++ ) saved[i] = -local_best[i];
-        }
+	// Finish ordinary phase saving before installing the new phase targets.
+	backtrack(0);
 
-        rephase_inc *= 2;
-        rephase_limit = conflicts + rephase_inc;
-        ++rephases;
+	// Retain V3's phase-selection sequence and conflict-based schedule.
+	if ( rephases / 2 == 1 ) {
+		for ( int i = 1; i <= vars; i ++ ) saved[i] = local_best[i];
+	} else {
+		for ( int i = 1; i <= vars; i ++ ) saved[i] = -local_best[i];
+	}
+
+	rephase_inc *= 2;
+	rephase_limit = conflicts + rephase_inc;
+	rephases ++;
 }
 
 // Clause deletion
-int Solver::reduce() {
-        // The only heuristic that performs a root backtrack.
+void Solver::reduce() {
+        // Reduce at the root; restart and rephase also perform root backtracks.
         backtrack(0);
         reduces = 0;
-        int reduceStep = 512;
-        if ( const char *env = getenv("UATU_REDUCE_STEP") ) {
-                const int parsed = atoi(env);
-                if ( parsed > 0 ) reduceStep = parsed;
-        }
-        reduce_limit += reduceStep;
+        reduce_limit += 512;
         ++reductionRuns;
 
         const int oldSize = static_cast<int>(clauseDB.size());
@@ -724,8 +642,6 @@ int Solver::reduce() {
                 }
                 watchers.resize(out);
         }
-
-        return vivifyReductionEpoch();
 }
 
 // Solver
@@ -776,24 +692,15 @@ int Solver::solve() {
                         ++conflicts;
                         ++reduces;
                 } else if ( reduces >= reduce_limit ) {
-                        result = reduce();
+                        reduce();
                 } else if ( lbd_queue_size == 50 &&
                             0.8 * fast_lbd_sum / lbd_queue_size >
                                     slow_lbd_sum / conflicts ) {
-                        resetRecentLBD();
+                        restart();
                 } else if ( conflicts >= rephase_limit ) {
                         rephase();
                 } else {
                         result = decide();
-                }
-        }
-
-        if ( result == 10 ) {
-                model.assign(vars + 1, 0);
-                for ( int i = 1; i <= vars; i ++ ) model[i] = value[i];
-                if ( !reconstructPreprocessedModel(preprocessing, model) ) {
-                        fprintf( stderr, "internal error: failed to reconstruct preprocessed model\n" );
-                        result = 30;
                 }
         }
 
@@ -807,13 +714,8 @@ int Solver::solve() {
         return result;
 }
 
-// Print the reconstructed model when the result is SAT
+// Print model when the result is SAT
 void Solver::printModel() {
-        const std::vector<int8_t> &output = model.empty() ? preprocessing.rootValues : model;
-        for ( int i = 1; i <= vars; i ++ ) {
-                const int8_t assigned = i < static_cast<int>(output.size())
-                        ? output[i] : value[i];
-                printf( "%d ", assigned >= 0 ? i : -i );
-        }
-        printf( "0\n" );
+    	for ( int i = 1; i <= vars; i ++ ) printf( "%d ", value[i] * i );
+    	printf( "0\n" );
 }
