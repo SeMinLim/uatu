@@ -1,0 +1,28 @@
+name: Read Root Sanity Diagnostic
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/inspect-root-sanity-windows.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-case-1
+          path: result
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - name: Print original sanitizer diagnostic
+        shell: python
+        run: |
+          from pathlib import Path
+          print('SANITIZER_LOG_BEGIN')
+          print(Path('result/sanitizer.log').read_text(errors='replace'))
+          print('SANITIZER_LOG_END')
