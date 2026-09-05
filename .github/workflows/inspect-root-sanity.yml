@@ -1,0 +1,30 @@
+name: Inspect Root Sanity Diagnostic
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/inspect-root-sanity.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-case-1
+          path: result
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - name: Print original diagnostic
+        run: |
+          cat result/sanitizer.log
+          cat result/sanitizer.time
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          row = json.loads(Path('result/result.json').read_text())
+          print(json.dumps({key: value for key, value in row.items() if key != 'runner'}, indent=2))
+          PY
