@@ -1,0 +1,120 @@
+name: Ver4 Root Restart Sanity and MiniSAT 100
+
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/ver4-root-sanity-100.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.sample.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify frozen solver source
+        run: |
+          set -euo pipefail
+          git diff --exit-code 60e2f03e533d6d1c16995f119a876bae140bbdc5 HEAD -- cpu/ver_4
+          git rev-parse HEAD
+          sha256sum cpu/ver_4/solver.cpp cpu/ver_4/solver.h cpu/ver_4/main.cpp
+          python3 -m py_compile sanity_temp/prepare.py sanity_temp/run_case.py sanity_temp/aggregate.py
+      - name: Sample 100 from official 400
+        id: sample
+        run: python3 sanity_temp/prepare.py
+      - name: Build unchanged release and sanitizer solvers
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          make -C cpu/ver_4 clean all CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          cp cpu/ver_4/obj/uatu_solver bin/ver4
+          g++ -std=c++17 -O1 -g -Wall -Wextra -Wpedantic -Werror \
+            -fsanitize=address,undefined -fno-omit-frame-pointer -fno-pie -no-pie \
+            -DUATU_PROFILE_BCP=0 cpu/ver_4/solver.cpp cpu/ver_4/main.cpp -o bin/ver4-sanitize
+          g++ --version > prepared/compiler.txt
+          sha256sum bin/ver4 bin/ver4-sanitize > prepared/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: root-sanity-binaries
+          path: bin
+          if-no-files-found: error
+          retention-days: 7
+
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-binaries
+          path: bin
+      - name: Install reference solver and verify binaries
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y minisat
+          chmod +x bin/ver4 bin/ver4-sanitize
+          sha256sum -c prepared/binaries.sha256
+          dpkg-query -W minisat
+      - name: Run paired solvers and sanitizer
+        run: python3 sanity_temp/run_case.py '${{ matrix.index }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: root-sanity-case-${{ matrix.index }}
+          path: result
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    needs:
+      - prepare
+      - evaluate
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: root-sanity-case-*
+          path: collected
+          merge-multiple: false
+      - name: Validate all 100 pairs and calculate PAR-2
+        run: python3 sanity_temp/aggregate.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: root-sanity-final-summary
+          path: summary
+          if-no-files-found: error
+          retention-days: 7
