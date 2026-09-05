@@ -1,0 +1,130 @@
+name: Validate Ver4 Sanity Fixes
+on:
+  push:
+    branches: [temp/ver4-sanity-fix-validation-20260905]
+    paths:
+      - sanity_fix/**
+      - cpu/ver_4/tests/**
+      - .github/workflows/ver4-sanity-fix.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply focused source changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          code = Path('sanity_fix/apply.py').read_text()
+          before = "h = replace_once(h, 'double *activity;', 'double *activity = nullptr;')"
+          after = "h = h.replace('double *activity;', 'double *activity = nullptr;')"
+          assert code.count(before) == 1
+          exec(compile(code.replace(before, after), 'sanity_fix/apply.py', 'exec'))
+          PY
+          git diff --stat
+          git diff --check
+      - name: Run sanitizers, boundary cases, allocation injection, and brute-force checks
+        run: |
+          set -euo pipefail
+          python3 cpu/ver_4/tests/regression.py --samples 500 --build-dir work --baseline 60e2f03e533d6d1c16995f119a876bae140bbdc5 | tee regression.log
+          make -C cpu/ver_4 release profile debug
+          sha256sum cpu/ver_4/solver.h cpu/ver_4/solver.cpp cpu/ver_4/main.cpp cpu/ver_4/tests/regression.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-source
+          path: |
+            cpu/ver_4/solver.h
+            cpu/ver_4/solver.cpp
+            cpu/ver_4/main.cpp
+            cpu/ver_4/tests/regression.py
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-evidence
+          path: |
+            regression.log
+            work/regression.json
+          if-no-files-found: warn
+          retention-days: 7
+  original-input:
+    needs: regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [33, 34, 36, 39, 70]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-source
+          path: cpu/ver_4
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          path: prepared
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - name: Recheck the original failing input
+        run: python3 sanity_fix/real_case.py ${{ matrix.index }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-original-input-${{ matrix.index }}
+          path: evidence
+          if-no-files-found: warn
+          retention-days: 7
+  materialize:
+    needs: [regression, original-input]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-source
+          path: cpu/ver_4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fixed-original-input-*
+          path: original-evidence
+      - name: Require all original-case rechecks
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows = [json.loads(p.read_text()) for p in Path('original-evidence').rglob('result.json')]
+          assert len(rows) == 5
+          assert {r['index'] for r in rows} == {33, 34, 36, 39, 70}
+          assert all(r['all_checks_passed'] for r in rows)
+          print('ALL_FIVE_ORIGINAL_INPUT_RECHECKS_PASSED')
+          PY
+      - name: Store only tested code on an isolated branch; do not update main
+        run: |
+          set -euo pipefail
+          BASE=60e2f03e533d6d1c16995f119a876bae140bbdc5
+          git diff --check
+          export GIT_INDEX_FILE="$RUNNER_TEMP/fixed-source.index"
+          git read-tree "$BASE"
+          git add cpu/ver_4/solver.h cpu/ver_4/solver.cpp cpu/ver_4/main.cpp cpu/ver_4/tests/regression.py
+          TREE=$(git write-tree)
+          COMMIT=$(printf 'Validated ver4 counter and memory safety fixes\n' | git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit-tree "$TREE" -p "$BASE")
+          git diff --stat "$BASE" "$COMMIT"
+          git diff --name-only "$BASE" "$COMMIT"
+          git push origin "$COMMIT:refs/heads/temp/ver4-sanity-fixed-source-20260905"
+          printf 'VALIDATED_SOURCE_TREE=%s\nVALIDATED_SOURCE_COMMIT=%s\n' "$TREE" "$COMMIT"
+          sha256sum cpu/ver_4/solver.h cpu/ver_4/solver.cpp cpu/ver_4/main.cpp cpu/ver_4/tests/regression.py
