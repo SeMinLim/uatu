@@ -1,0 +1,80 @@
+name: Inspect Accumulated Root Sanity Diagnostics
+on:
+  push:
+    branches:
+      - temp/ver4-root-sanity-100-20260905
+    paths:
+      - .github/workflows/inspect-root-progress.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      diagnostics: ${{ steps.check.outputs.diagnostics }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: root-sanity-case-*
+          path: paired
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: isolated-sanitizer-*
+          path: rechecks
+          run-id: 33959442043
+          github-token: ${{ github.token }}
+      - name: Read raw diagnostics and preserve sample coverage
+        id: check
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from collections import Counter
+          summary = {'partial': True, 'performance_score': 'not calculated until all 100 are present'}
+          for group, filename in [('paired', 'result.json'), ('rechecks', 'sanitizer_result.json')]:
+              counts = Counter()
+              errors = []
+              cases = []
+              negatives = []
+              for path in Path(group).rglob(filename):
+                  case = json.loads(path.read_text())
+                  cases.append(case['index'])
+                  if not case.get('completed'):
+                      errors.append({'index': case['index'], 'error': case.get('infrastructure_error')})
+                      continue
+                  entries = case['results'] if group == 'paired' else [case['result']]
+                  for row in entries:
+                      counts[row['solver'] + ':' + row['status']] += 1
+                      log_path = path.parent / (row['solver'] + '.log')
+                      text = log_path.read_text(errors='replace')
+                      if row['status'] not in ('sat', 'unsat', 'timeout'):
+                          errors.append({'index': case['index'], 'hash': case['hash'], 'filename': case['filename'],
+                              'solver': row['solver'], 'status': row['status'], 'exit': row['exit_code'],
+                              'log_head': text[:2800], 'validation_error': row.get('validation_error')})
+                      if row['solver'] == 'ver4':
+                          bad = {key: int(value) for key, value in re.findall(r'^(Conflicts|Decisions|Unit Propagations|BCP Calls|Restarts|Rephases|Clause Reductions)\s*:\s*(-\d+)', text, re.M)}
+                          if bad:
+                              negatives.append({'index': case['index'], 'hash': case['hash'], 'counters': bad})
+              summary[group] = {'case_count': len(cases), 'counts': dict(counts), 'errors': errors[:10],
+                                'error_count': len(errors), 'negative_counters': negatives}
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('diagnostics=' + json.dumps(summary, separators=(',', ':')) + '\n')
+          PY
+  report:
+    needs: inspect
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Print observed interim errors only
+        env:
+          DIAGNOSTICS: ${{ needs.inspect.outputs.diagnostics }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          print('INTERIM_DIAGNOSTICS_BEGIN')
+          print(json.dumps(json.loads(os.environ['DIAGNOSTICS']), indent=2))
+          print('INTERIM_DIAGNOSTICS_END')
+          PY
