@@ -11,11 +11,45 @@ permissions:
 jobs:
   compute:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 75
     outputs:
       dashboard: ${{ steps.summarize.outputs.dashboard }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require complete original sample before aggregating
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          jobs = [(33957925983, 'root-sanity-case-'), (33959442043, 'isolated-sanitizer-')]
+          deadline = time.monotonic() + 3600
+          while True:
+              complete = True
+              for run, prefix in jobs:
+                  seen = set()
+                  page = 1
+                  while True:
+                      url = f'https://api.github.com/repos/SeMinLim/uatu/actions/runs/{run}/artifacts?per_page=100&page={page}'
+                      request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                      with urllib.request.urlopen(request, timeout=60) as response:
+                          artifacts = json.load(response)['artifacts']
+                      for artifact in artifacts:
+                          name = artifact['name']
+                          if name.startswith(prefix) and name[len(prefix):].isdigit() and not artifact['expired']:
+                              seen.add(int(name[len(prefix):]))
+                      if len(artifacts) < 100:
+                          break
+                      page += 1
+                  missing = sorted(set(range(100)) - seen)
+                  print(json.dumps({'run': run, 'available': len(seen), 'missing': missing}), flush=True)
+                  complete = complete and not missing and seen == set(range(100))
+              if complete:
+                  break
+              if time.monotonic() >= deadline:
+                  raise RuntimeError('Incomplete experiment; refuse to manufacture a 100-instance score')
+              time.sleep(30)
+          PY
       - uses: actions/download-artifact@v4
         with:
           name: root-sanity-inputs
@@ -34,6 +68,46 @@ jobs:
           path: rechecks
           run-id: 33959442043
           github-token: ${{ github.token }}
+      - name: Reproduce counter boundary with unchanged solver source
+        run: |
+          mkdir -p final
+          cat > /tmp/counter-boundary.cpp <<'CPP'
+          #include "solver.h"
+          #include <limits.h>
+          #include <string.h>
+
+          int main( int argc, char **argv ) {
+          	if ( argc != 2 ) return 2;
+          	Solver solver{};
+          	solver.vars = 2;
+          	solver.clauses = 1;
+          	solver.initialize();
+          	if ( strcmp(argv[1], "unit") == 0 ) {
+          		std::vector<int> clause;
+          		clause.push_back(-1);
+          		clause.push_back(2);
+          		solver.add_clause(clause);
+          		solver.assign(1, 0, -1);
+          		solver.unitPropagations = INT_MAX;
+          	} else {
+          		solver.bcpFunctionCalls = INT_MAX;
+          	}
+          	solver.propagate();
+          	return 0;
+          }
+          CPP
+          g++ -std=c++17 -O1 -g -fsanitize=undefined -fno-sanitize-recover=all \
+            -DUATU_PROFILE_BCP=0 -Icpu/ver_4 cpu/ver_4/solver.cpp /tmp/counter-boundary.cpp -o /tmp/counter-boundary
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          result = {}
+          for mode in ['unit', 'bcp']:
+              run = subprocess.run(['/tmp/counter-boundary', mode], capture_output=True, text=True, timeout=10)
+              result[mode] = {'exit_code': run.returncode, 'diagnostic': run.stderr, 'overflow_detected': 'signed integer overflow' in run.stderr}
+              Path('final/counter-' + mode + '.log').write_text(run.stdout + run.stderr)
+          Path('final/boundary_check.json').write_text(json.dumps({'test': 'forced INT_MAX counter boundary; not a benchmark measurement', 'results': result}, indent=2))
+          PY
       - name: Independently recompute and check all 100 cases
         id: summarize
         run: |
@@ -45,19 +119,17 @@ jobs:
               measured = subprocess.run(['python3', 'sanity_temp/finalize.py'], stdout=log, stderr=subprocess.STDOUT)
               counters = subprocess.run(['python3', 'sanity_temp/check_counters.py'], stdout=log, stderr=subprocess.STDOUT)
           if measured.returncode or counters.returncode:
-              dashboard = {'verification_complete': False,
-                           'error': Path('final/compute.log').read_text(errors='replace')[-7000:]}
+              dashboard = {'verification_complete': False, 'error': Path('final/compute.log').read_text(errors='replace')[-7000:]}
           else:
               summary = json.loads(Path('final/decision.json').read_text())
-              counter_check = json.loads(Path('final/counter_check.json').read_text())
-              dashboard = {key: value for key, value in summary.items()
-                           if key not in ('runtime_errors', 'sanitizer_errors')}
+              dashboard = {key: value for key, value in summary.items() if key not in ('runtime_errors', 'sanitizer_errors')}
               dashboard['verification_complete'] = True
               dashboard['runtime_error_count'] = len(summary['runtime_errors'])
               dashboard['runtime_error_examples'] = summary['runtime_errors'][:8]
               dashboard['sanitizer_error_count'] = len(summary['sanitizer_errors'])
               dashboard['sanitizer_error_examples'] = summary['sanitizer_errors'][:8]
-              dashboard['counter_check'] = counter_check
+              dashboard['counter_check'] = json.loads(Path('final/counter_check.json').read_text())
+              dashboard['boundary_check'] = json.loads(Path('final/boundary_check.json').read_text())
               heads = []
               for root, filename in [('paired', 'result.json'), ('rechecks', 'sanitizer_result.json')]:
                   for path in Path(root).rglob(filename):
@@ -66,9 +138,7 @@ jobs:
                       for row in rows:
                           if row['status'] not in ('sat', 'unsat', 'timeout') and len(heads) < 8:
                               log = path.parent / (row['solver'] + '.log')
-                              heads.append({'index': case['index'], 'solver': row['solver'], 'status': row['status'],
-                                            'validation_error': row.get('validation_error'),
-                                            'log_head': log.read_text(errors='replace')[:2500]})
+                              heads.append({'index': case['index'], 'solver': row['solver'], 'status': row['status'], 'validation_error': row.get('validation_error'), 'log_head': log.read_text(errors='replace')[:2500]})
               dashboard['diagnostic_heads'] = heads
           Path('final/dashboard.json').write_text(json.dumps(dashboard, indent=2) + '\n')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
