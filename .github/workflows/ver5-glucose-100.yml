@@ -1,0 +1,194 @@
+name: Ver5 Five Heuristics versus MiniSAT 100
+on:
+  push:
+    branches: [temp/ver5-glucose-20260906]
+    paths: [.github/workflows/ver5-glucose-100.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      indices: ${{ steps.manifest.outputs.indices }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-validated-source
+          run-id: 34018252855
+          github-token: ${{ github.token }}
+          path: verified
+      - uses: actions/download-artifact@v4
+        with:
+          name: root-sanity-inputs
+          run-id: 33957925983
+          github-token: ${{ github.token }}
+          path: prepared
+      - name: Check the complete fixed random manifest
+        id: manifest
+        run: python3 ver5_work/evaluate.py prepare
+      - name: Package verified binaries and evaluator
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y minisat
+          cp -a verified/payload tools
+          cp /usr/bin/minisat tools/minisat
+          cp ver5_work/evaluate.py tools/evaluate.py
+          python3 - <<'PY'
+          import hashlib, json, subprocess
+          from pathlib import Path
+          def sha(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+          assert sha('tools/ver5') == 'c3d5fcab1a63d459b24ffff5ace322738d5833b8f774d919d3e8b631cabe89a3'
+          assert json.loads(Path('tools/regression.json').read_text())['all_passed']
+          assert json.loads(Path('tools/features.json').read_text())['feature_units_passed']
+          build = {'source_validation_run': 34018252855,
+                   'source_manifest_sha256': sha('tools/candidate-source.json'),
+                   'source_archive_sha256': sha('tools/source.tar.gz'),
+                   'evaluator_sha256': sha('tools/evaluate.py'),
+                   'binaries': {name: sha('tools/' + name) for name in ('ver5', 'minisat')},
+                   'minisat_package': subprocess.check_output(['dpkg-query', '-W', 'minisat'], text=True),
+                   'compiler': subprocess.check_output(['g++', '--version'], text=True)}
+          Path('tools/build.json').write_text(json.dumps(build, indent=2) + '\n')
+          print('BUILD_IDENTITY=' + json.dumps(build), flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-paired-tools
+          path: tools
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-paired-manifest
+          path: prepared
+          retention-days: 7
+  pair:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 100
+      matrix:
+        index: ${{ fromJSON(needs.prepare.outputs.indices) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-tools
+          path: tools
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-manifest
+          path: prepared
+      - name: Install the baseline runtime dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y minisat
+      - name: Run both solvers sequentially with identical limits
+        run: python3 tools/evaluate.py pair ${{ matrix.index }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-pair-${{ matrix.index }}
+          path: result
+          if-no-files-found: error
+          retention-days: 7
+  aggregate:
+    if: always()
+    needs: [prepare, pair]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-tools
+          path: tools
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-manifest
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver5-pair-*
+          path: collected
+      - name: Require all 100 pairs and recompute PAR-2
+        run: |
+          set -euo pipefail
+          python3 tools/evaluate.py aggregate
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('summary/summary.json').read_text())
+          assert not data['minisat']['bugs'], 'baseline verification error requires investigation'
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-paired-final
+          path: summary
+          if-no-files-found: error
+          retention-days: 7
+  source-tree:
+    needs: aggregate
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-tools
+          path: tools
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-paired-final
+          path: summary
+      - name: Publish source objects only, without moving any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, tarfile, urllib.request
+          from pathlib import Path
+          base = 'ef7ee281b770758a318329501d85061fc563b496'
+          build = json.loads(Path('tools/build.json').read_text())
+          result = json.loads(Path('summary/summary.json').read_text())
+          assert result['code_validation_passed'] and result['all_100_present']
+          assert not result['minisat']['bugs']
+          assert hashlib.sha256(Path('tools/source.tar.gz').read_bytes()).hexdigest() == build['source_archive_sha256']
+          with tarfile.open('tools/source.tar.gz') as archive:
+              for member in archive.getmembers():
+                  assert not member.name.startswith('/') and '..' not in Path(member.name).parts
+              archive.extractall('source', filter='data')
+          manifest = json.loads(Path('source/candidate-source.json').read_text())
+          assert manifest['base'] == base
+          def api(endpoint, data=None):
+              request = urllib.request.Request('https://api.github.com/repos/SeMinLim/uatu/' + endpoint,
+                  data=None if data is None else json.dumps(data).encode(),
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+          entries = []
+          for filename, expected in manifest['files'].items():
+              assert filename == 'README.md' or filename.startswith('cpu/ver_5/')
+              assert 'obj' not in Path(filename).parts
+              content = Path('source', filename).read_bytes()
+              assert hashlib.sha256(content).hexdigest() == expected
+              blob = api('git/blobs', {'content': content.decode(), 'encoding': 'utf-8'})
+              entries.append({'path': filename, 'mode': '100644', 'type': 'blob', 'sha': blob['sha']})
+          tree = api('git/trees', {'base_tree': 'dd12ddc77e731ab42992a773dc9123b1a5e8aca4', 'tree': entries})
+          evidence = {'base_commit': base, 'tree': tree['sha'], 'files': entries,
+                      'source_manifest_sha256': build['source_manifest_sha256'],
+                      'benchmark_run_id': os.environ['GITHUB_RUN_ID']}
+          Path('source-tree.json').write_text(json.dumps(evidence, indent=2) + '\n')
+          print('VALIDATED_SOURCE_TREE=' + json.dumps(evidence), flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-source-tree
+          path: source-tree.json
+          retention-days: 7
