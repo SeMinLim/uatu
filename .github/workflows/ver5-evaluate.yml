@@ -1,0 +1,95 @@
+name: Ver5 Glucose Policies versus MiniSAT 100
+on:
+  push:
+    branches: [temp/ver5-glucose-validation-20260906]
+    paths: [.github/workflows/ver5-evaluate.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.sample.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: sample
+        name: Select 100 from the full official population
+        run: python3 validation_temp/prepare.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-100-inputs
+          path: prepared
+          retention-days: 14
+          overwrite: true
+  evaluate:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-core-validation
+          path: core
+          run-id: 34017970582
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-100-inputs
+          path: prepared
+      - name: Build the exact validated source and install MiniSAT
+        run: |
+          set -euo pipefail
+          tar -xzf core/ver5-source.tar.gz
+          sha256sum -c source.sha256
+          make -C cpu/ver_5 release CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          if ! command -v minisat; then
+            sudo apt-get -o Acquire::Retries=3 update -qq
+            sudo apt-get -o Acquire::Retries=3 install -y minisat
+          fi
+          dpkg-query -W minisat
+      - name: Paired sequential 1000-second measurements and correctness checks
+        run: python3 validation_temp/run_case.py ${{ matrix.index }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-pair-${{ matrix.index }}
+          path: result
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+  report:
+    needs: [prepare, evaluate]
+    if: always()
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-100-inputs
+          path: prepared
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ver5-pair-*
+          path: collected
+      - name: Verify complete coverage and recompute PAR-2
+        run: |
+          set -euo pipefail
+          python3 validation_temp/aggregate.py 2>&1 | tee report.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-100-report
+          path: |
+            report.log
+            summary
+          retention-days: 14
+          overwrite: true
