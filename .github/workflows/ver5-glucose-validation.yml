@@ -1,0 +1,48 @@
+name: Validate Ver5 Glucose-style Heuristics
+on:
+  push:
+    branches: [temp/ver5-glucose-20260906]
+    paths: [.github/workflows/ver5-glucose-validation.yml]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize Ver5 from the pinned Ver4
+        run: python3 ver5_work/materialize.py
+      - name: Strict release, debug, and profile builds
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 release debug profile CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+      - name: Inherited counter, allocation, parser and correctness regressions
+        run: |
+          set -euo pipefail
+          python3 cpu/ver_5/tests/regression.py --samples 500 --build-dir regression-work 2>&1 | tee regression.log
+      - name: Feature-specific sanitizer and replacement checks
+        run: |
+          set -euo pipefail
+          python3 ver5_work/feature_checks.py 2>&1 | tee feature.log
+      - name: Package the tested implementation
+        run: |
+          set -euo pipefail
+          mkdir -p payload
+          cp cpu/ver_5/obj/uatu_solver payload/ver5
+          tar --exclude='*/obj' --exclude='*/__pycache__' -czf payload/source.tar.gz README.md cpu/ver_5 candidate-source.json
+          cp candidate-source.json payload/
+          cp regression-work/regression.json payload/regression.json
+          cp feature-work/summary.json payload/features.json
+          sha256sum payload/ver5 payload/source.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-validated-source
+          path: |
+            payload
+            regression.log
+            feature.log
+          retention-days: 7
