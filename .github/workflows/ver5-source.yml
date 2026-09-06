@@ -1,0 +1,33 @@
+name: Export Validated Ver5 Source Objects
+on:
+  push:
+    branches: [temp/ver5-glucose-validation-20260906]
+    paths: [.github/workflows/ver5-source.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  source:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ver5-core-validation
+          path: core
+          run-id: 34017970582
+          github-token: ${{ github.token }}
+      - name: Export blobs only, without a commit or branch update
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tar -xzf core/ver5-source.tar.gz
+          sha256sum -c source.sha256
+          python3 validation_temp/export_source.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ver5-source-blobs
+          path: source-blobs.json
+          retention-days: 14
