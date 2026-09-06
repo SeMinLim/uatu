@@ -1,0 +1,48 @@
+name: Validate Ver5 Glucose Policies
+on:
+  push:
+    branches: [temp/ver5-glucose-validation-20260906]
+    paths: [.github/workflows/ver5-build.yml]
+permissions:
+  contents: read
+jobs:
+  correctness:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize Ver5 from the pinned corrected Ver4
+        run: |
+          set -euo pipefail
+          python3 validation_temp/materialize.py
+          python3 validation_temp/finalize_source.py
+          git diff --exit-code -- cpu/ver_4
+      - name: Strict builds and inherited regression
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 release debug profile CXXFLAGS_COMMON='-std=c++17 -Wall -Wextra -Wpedantic -Werror'
+          python3 cpu/ver_5/tests/regression.py --samples 1000 --build-dir inherited --baseline 60e2f03e533d6d1c16995f119a876bae140bbdc5 2>&1 | tee inherited.log
+      - name: Exhaustive vivification and all policy combinations
+        run: |
+          set -euo pipefail
+          python3 cpu/ver_5/tests/heuristics_regression.py 2>&1 | tee heuristics.log
+      - name: Package the exact tested source
+        run: |
+          set -euo pipefail
+          make -C cpu/ver_5 clean
+          find cpu/ver_5 -type f -print0 | sort -z | xargs -0 sha256sum > source.sha256
+          cat source.sha256
+          tar -czf ver5-source.tar.gz cpu/ver_5 source.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ver5-core-validation
+          path: |
+            inherited.log
+            heuristics.log
+            inherited/regression.json
+            source.sha256
+            ver5-source.tar.gz
+          retention-days: 14
