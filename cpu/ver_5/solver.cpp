@@ -10,14 +10,6 @@
 #define UATU_PROFILE_BCP 0
 #endif
 
-// Glucose-style limits for the additional binary-resolution pass.
-static const size_t BINARY_MINIMIZATION_MAX_SIZE = 30;
-static const int BINARY_MINIMIZATION_MAX_LBD = 6;
-
-// Glucose 3.0 learned-clause retention thresholds.
-static const int GLUE_LBD = 2;
-static const int LBD_PROTECTION_MAX = 30;
-
 
 //// Required functions
 // Elapsed time checker
@@ -89,6 +81,28 @@ static int invalidCNF() {
 	return 30;
 }
 
+// Keep clause identifiers stable while ranking the learnt database.
+struct ClauseRank {
+	int clauseIdx;
+	int lbd;
+	size_t size;
+	double activity;
+};
+
+static bool higherClauseActivity( const ClauseRank &a, const ClauseRank &b ) {
+	if ( a.activity != b.activity ) return a.activity > b.activity;
+	return a.clauseIdx < b.clauseIdx;
+}
+
+static bool worseClauseLBD( const ClauseRank &a, const ClauseRank &b ) {
+	const bool aBinary = a.size == 2;
+	const bool bBinary = b.size == 2;
+	if ( aBinary != bBinary ) return !aBinary;
+	if ( a.lbd != b.lbd ) return a.lbd > b.lbd;
+	if ( a.activity != b.activity ) return a.activity < b.activity;
+	return a.clauseIdx < b.clauseIdx;
+}
+
 //// Solver
 // Release partially initialized arrays as well as successfully parsed formulas.
 Solver::~Solver() {
@@ -128,11 +142,14 @@ void Solver::initialize( void ) {
         trail.reserve(vars);
         decVarInTrail.reserve(vars);
         learnt.reserve(64);
-        minimizeStack.reserve(64);
-        minimizeTouched.reserve(64);
+	minimizeStack.reserve(64);
+	minimizeTouched.reserve(64);
 
         conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
         restarts = rephases = reduces = 0;
+	blockedRestarts = varDecayUpdates = 0;
+	trail_queue_size = trail_queue_pos = 0;
+	trail_queue_sum = 0;
         reductionRuns = 0;
         deletedClauses = minimizedLiterals = 0;
         clauseActivityBumps = dynamicLBDUpdates = 0;
@@ -452,14 +469,13 @@ void Solver::updateClauseQuality( int cref ) {
 
 	const int currentLBD = calculateClauseLBD(clause);
 	if ( currentLBD > 0 && currentLBD + 1 < clause.lbd ) {
-		// Use the old LBD to decide whether this improvement earns a grace cycle.
 		if ( clause.lbd <= LBD_PROTECTION_MAX ) clause.canBeDeleted = false;
 		clause.lbd = currentLBD;
 		dynamicLBDUpdates ++;
 	}
 }
 
-// Follow reason chains without using the C++ call stack.
+// Follow reason chains with explicit storage and roll back unsuccessful proofs.
 bool Solver::isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
                                       uint32_t membershipStamp ) {
 	const size_t touchedStart = minimizeTouched.size();
@@ -482,7 +498,7 @@ bool Solver::isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
 			if ( other == current || level[other] == 0 ||
 			     mark[other] == membershipStamp ) continue;
 
-			// A missing level bit rejects a branch; collisions only cause more traversal.
+			// Level-bit collisions only permit extra traversal, never deletion.
 			const uint32_t levelBit = uint32_t(1) << (level[other] & 31);
 			const int otherReason = reason[other];
 			if ( (abstractLevels & levelBit) == 0 || otherReason < 0 ||
@@ -497,7 +513,6 @@ bool Solver::isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
 		}
 	}
 
-	// Keep successful proofs cached, but discard every mark from a failed attempt.
 	if ( !redundant ) {
 		for ( size_t i = touchedStart; i < minimizeTouched.size(); i ++ ) {
 			mark[minimizeTouched[i]] = 0;
@@ -508,7 +523,7 @@ bool Solver::isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
 	return redundant;
 }
 
-// Remove literals whose reason graph ends at learnt literals or root assignments.
+// Prove redundancy through the implication graph while retaining the UIP.
 void Solver::minimizeLearntRecursive() {
 	if ( learnt.size() <= 1 ) return;
 
@@ -523,7 +538,7 @@ void Solver::minimizeLearntRecursive() {
 		if ( i != 0 ) abstractLevels |= uint32_t(1) << (level[variable] & 31);
 	}
 
-	// Keep the asserting literal and retain the original membership during this pass.
+	// Original membership remains valid as removed literals are themselves redundant.
 	size_t out = 1;
 	for ( size_t i = 1; i < learnt.size(); i ++ ) {
 		const int literal = learnt[i];
@@ -541,11 +556,10 @@ void Solver::minimizeLearntRecursive() {
 	minimizeTouched.clear();
 }
 
-// Resolve (p OR q OR rest) with an existing binary (p OR NOT q).
+// Resolve (p OR q OR rest) with a binary (p OR NOT q), preserving the UIP p.
 void Solver::minimizeLearntBinary() {
 	if ( learnt.size() <= 1 || learnt.size() > BINARY_MINIMIZATION_MAX_SIZE ) return;
 
-	// Select small, low-LBD clauses before scanning the existing watcher list.
 	nextAnalysisStamp();
 	int currentLBD = 0;
 	for ( size_t i = 0; i < learnt.size(); i ++ ) {
@@ -574,13 +588,12 @@ void Solver::minimizeLearntBinary() {
 		const Clause &clause = clauseDB[cref];
 		if ( clause.literals.size() != 2 ) continue;
 
-		// Check the actual binary clause, not a blocker from a longer clause.
 		int otherLiteral = 0;
 		if ( clause.literals[0] == assertingLiteral ) otherLiteral = clause.literals[1];
 		else if ( clause.literals[1] == assertingLiteral ) otherLiteral = clause.literals[0];
 		else continue;
 
-		// Learnt literals are false here, so a true partner has the opposite polarity.
+		// Every learnt literal is false; the true binary partner has opposite polarity.
 		const int other = abs(otherLiteral);
 		if ( mark[other] == membershipStamp && Value(otherLiteral) == 1 ) mark[other] = 0;
 	}
@@ -662,9 +675,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 
         learnt[0] = -resolveLiteral;
 
-        // Minimize before computing the final LBD and backtrack level.
-        minimizeLearntRecursive();
-        minimizeLearntBinary();
+	minimizeLearntRecursive();
+	minimizeLearntBinary();
 
         nextAnalysisStamp();
         lbd = 0;
@@ -681,7 +693,7 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
         lbd_queue[lbd_queue_pos ++] = lbd;
         if ( lbd_queue_pos == 50 ) lbd_queue_pos = 0;
         fast_lbd_sum += lbd;
-        slow_lbd_sum += lbd > 50 ? 50 : lbd;
+        slow_lbd_sum += lbd;
 
         if ( learnt.size() == 1 ) {
                 backtrackLevel = 0;
@@ -725,6 +737,36 @@ void Solver::backtrack( int backtrackLevel ) {
         decVarInTrail.resize(backtrackLevel);
 }
 
+// Delay LBD restarts while conflict-time assignments are unusually deep.
+void Solver::updateRestartBlocking() {
+	const int trailSize = static_cast<int>(trail.size());
+	if ( trail_queue_size < RESTART_TRAIL_WINDOW ) trail_queue_size ++;
+	else trail_queue_sum -= static_cast<uint64_t>(trail_queue[trail_queue_pos]);
+	trail_queue[trail_queue_pos] = trailSize;
+	trail_queue_sum += static_cast<uint64_t>(trailSize);
+	trail_queue_pos ++;
+	if ( trail_queue_pos == RESTART_TRAIL_WINDOW ) trail_queue_pos = 0;
+
+	// conflicts counts completed analyses; this conflict is the next one.
+	if ( conflicts < RESTART_BLOCKING_START || lbd_queue_size != 50 ||
+	     trail_queue_size != RESTART_TRAIL_WINDOW ) return;
+	const double averageTrail = static_cast<double>(trail_queue_sum) / trail_queue_size;
+	if ( trailSize <= RESTART_BLOCKING_FACTOR * averageTrail ) return;
+
+	fast_lbd_sum = 0;
+	lbd_queue_size = 0;
+	lbd_queue_pos = 0;
+	blockedRestarts ++;
+}
+
+// Gradually retain a longer VSIDS activity history.
+void Solver::updateVSIDSDecay() {
+	if ( conflicts == 0 || conflicts % VSIDS_DECAY_INTERVAL != 0 ||
+	     var_decay >= VSIDS_DECAY_MAX ) return;
+	var_decay = std::min(VSIDS_DECAY_MAX, var_decay + 0.01);
+	varDecayUpdates ++;
+}
+
 // Restart from the root while retaining learnt clauses and saved phases.
 void Solver::restart() {
 	backtrack(0);
@@ -758,8 +800,7 @@ void Solver::rephase() {
 
 // Clause deletion
 void Solver::reduce() {
-        // Reduce at the root; restart and rephase also perform root backtracks.
-        backtrack(0);
+        // Preserve the current trail and every clause used as its reason.
         reduces = 0;
         if ( reduce_limit <= UINT64_MAX - 512 ) reduce_limit += 512;
         else reduce_limit = UINT64_MAX;
@@ -774,36 +815,33 @@ void Solver::reduce() {
                 if ( clause >= origin_clauses && clause < oldSize ) locked[clause] = 1;
         }
 
-	std::vector<int> candidates;
+	std::vector<ClauseRank> candidates;
 	candidates.reserve(oldSize - origin_clauses);
-	for ( int i = origin_clauses; i < oldSize; i ++ ) candidates.push_back(i);
+	for ( int i = origin_clauses; i < oldSize; i ++ ) {
+		const Clause &clause = clauseDB[i];
+		candidates.push_back({i, clause.lbd, clause.literals.size(), clause.activity});
+	}
 
-	// Rank the whole learned database: worst LBD first, activity only breaks ties.
-	std::sort(candidates.begin(), candidates.end(), [&]( int a, int b ) {
-		const bool aBinary = clauseDB[a].literals.size() == 2;
-		const bool bBinary = clauseDB[b].literals.size() == 2;
-		if ( aBinary != bBinary ) return !aBinary;
-		if ( clauseDB[a].lbd != clauseDB[b].lbd ) {
-			return clauseDB[a].lbd > clauseDB[b].lbd;
-		}
-		if ( clauseDB[a].activity != clauseDB[b].activity ) {
-			return clauseDB[a].activity < clauseDB[b].activity;
-		}
-		return a < b;
-	});
+	// Glucose 4.2.1 also protects the most active 10%, rounding upward.
+	std::sort(candidates.begin(), candidates.end(), higherClauseActivity);
+	const size_t activeCount = candidates.size() - candidates.size() * 90 / 100;
+	for ( size_t i = 0; i < activeCount; i ++ ) {
+		clauseDB[candidates[i].clauseIdx].canBeDeleted = false;
+	}
+	std::sort(candidates.begin(), candidates.end(), worseClauseLBD);
 
 	std::vector<unsigned char> erase(oldSize, 0);
 	size_t deleteLimit = candidates.size() / 2;
 	uint64_t deleteCount = 0;
 	for ( size_t i = 0; i < candidates.size(); i ++ ) {
-		const int cref = candidates[i];
+		const int cref = candidates[i].clauseIdx;
 		Clause &clause = clauseDB[cref];
 		if ( i < deleteLimit && clause.literals.size() > 2 &&
 		     clause.lbd > GLUE_LBD && !locked[cref] && clause.canBeDeleted ) {
 			erase[cref] = 1;
 			deleteCount ++;
 		} else {
-			// Improved clauses survive once without consuming a deletion slot.
+			// A protected clause survives this cycle without consuming a deletion slot.
 			if ( !clause.canBeDeleted && deleteLimit < candidates.size() ) deleteLimit ++;
 			clause.canBeDeleted = true;
 		}
@@ -871,6 +909,7 @@ int Solver::solve() {
                 const int conflictClause = propagate();
                 if ( conflictClause != -1 ) {
                         updateLocalBest();
+			if ( !decVarInTrail.empty() ) updateRestartBlocking();
 
                         int backtrackLevel = 0;
                         int lbd = 0;
@@ -886,13 +925,14 @@ int Solver::solve() {
                                 assign(learnt[0], backtrackLevel, learnedClause);
                         }
 
-                        var_inc *= 1.0 / var_decay;
-                        clause_inc *= 1.0 / clause_decay;
                         ++conflicts;
+			updateVSIDSDecay();
+			var_inc *= 1.0 / var_decay;
+			clause_inc *= 1.0 / clause_decay;
                         ++reduces;
                 } else if ( reduces >= reduce_limit ) {
                         reduce();
-                } else if ( lbd_queue_size == 50 &&
+                } else if ( conflicts > 0 && lbd_queue_size == 50 &&
                             0.8 * fast_lbd_sum / lbd_queue_size >
                                     slow_lbd_sum / conflicts ) {
                         restart();

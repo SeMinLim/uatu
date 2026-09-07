@@ -45,6 +45,9 @@ int main( int argc, char **argv ) {
 	printf( "Unit Propagations    : %" PRIu64 "\n", solver.unitPropagations );
 	printf( "BCP Calls            : %" PRIu64 "\n", solver.bcpFunctionCalls );
 	printf( "Restarts             : %" PRIu64 "\n", solver.restarts );
+	printf( "Blocked Restarts     : %" PRIu64 "\n", solver.blockedRestarts );
+	printf( "VSIDS Decay Updates  : %" PRIu64 "\n", solver.varDecayUpdates );
+	printf( "VSIDS Decay          : %.2f\n", solver.var_decay );
 	printf( "Rephases             : %" PRIu64 "\n", solver.rephases );
 	printf( "Clause Reductions    : %" PRIu64 "\n", solver.reductionRuns );
 	printf( "Deleted Clauses      : %" PRIu64 "\n", solver.deletedClauses );

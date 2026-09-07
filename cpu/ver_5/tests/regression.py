@@ -179,7 +179,7 @@ int main() {
 		s.vars = 8;
 		s.initialize();
 		const int lbds[] = {8, 7, 6, 6, 6, 4};
-		const double activities[] = {1000.0, 0.0, 1.0, 1.0, 3.0, 0.0};
+		const double activities[] = {1000.0, 0.0, 1.0, 1.0, 3.0, 2000.0};
 		for ( int i = 0; i < 6; i ++ ) {
 			std::vector<int> clause{1, 2, 3};
 			if ( i == 3 ) clause.push_back(4);
@@ -202,7 +202,9 @@ int main() {
 		const int lbds[] = {4, 3, 2, 2};
 		for ( int i = 0; i < 4; i ++ ) {
 			std::vector<int> clause{1, 2, 3, 4};
-			s.clauseDB[s.add_clause(clause)].lbd = lbds[i];
+			const int id = s.add_clause(clause);
+			s.clauseDB[id].lbd = lbds[i];
+			s.clauseDB[id].activity = i == 3 ? 100.0 : 0.0;
 		}
 		s.reduce();
 		assert(s.deletedClauses == 2 && s.clauseDB.size() == 2);
@@ -226,7 +228,7 @@ int main() {
 		checkClauseReferences(s);
 	}
 	{
-		// Preserve originals, glue, binary clauses and root reasons while remapping.
+		// Preserve every trail reason at a nonzero decision level while remapping.
 		Solver s{};
 		s.vars = 7;
 		s.initialize();
@@ -246,16 +248,37 @@ int main() {
 		s.decVarInTrail.push_back(static_cast<int>(s.trail.size()));
 		s.assign(-4, 1, -1);
 		assert(s.propagate() == -1 && s.reason[5] == 1);
+		const std::vector<int> trailBefore = s.trail;
+		const std::vector<int> decisionsBefore = s.decVarInTrail;
+		const int propagatedBefore = s.propagated;
 		s.reduce();
-		assert(s.deletedClauses == 2 && s.clauseDB.size() == 5);
-		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == -1 && s.reduceMap[2] == -1);
-		assert(s.decVarInTrail.empty() && s.value[4] == 0 && s.value[5] == 0);
-		assert(s.reason[4] == -1 && s.reason[5] == -1);
-		assert(s.reason[2] == 0 && s.reason[3] == 1);
-		assert(s.reason[6] == 3 && s.reason[7] == 4);
+		assert(s.deletedClauses == 1 && s.clauseDB.size() == 6);
+		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == 1 && s.reduceMap[2] == -1);
+		assert(s.trail == trailBefore && s.decVarInTrail == decisionsBefore);
+		assert(s.propagated == propagatedBefore && s.value[4] == -1 && s.value[5] == 1);
+		assert(s.reason[4] == -1 && s.reason[5] == 1);
+		assert(s.reason[2] == 0 && s.reason[3] == 2);
+		assert(s.reason[6] == 4 && s.reason[7] == 5);
 		checkClauseReferences(s);
+		s.backtrack(0);
 		s.assign(-4, 0, -1);
-		assert(s.propagate() == -1 && s.value[5] == 0);
+		assert(s.propagate() == -1 && s.value[5] == 1 && s.reason[5] == 1);
+		checkClauseReferences(s);
+	}
+	{
+		// The most active ten percent survive even with the worst LBD.
+		Solver s{};
+		s.vars = 3;
+		s.initialize();
+		for ( int i = 0; i < 10; i ++ ) {
+			std::vector<int> clause{1, 2, 3};
+			const int id = s.add_clause(clause);
+			s.clauseDB[id].lbd = 20 - i;
+			s.clauseDB[id].activity = i == 0 ? 1000.0 : 1.0;
+		}
+		s.reduce();
+		assert(s.reduceMap[0] >= 0 && s.reduceMap[1] == -1);
+		assert(s.deletedClauses > 0);
 		checkClauseReferences(s);
 	}
 	{
@@ -420,10 +443,10 @@ def brute(variables, clauses):
     return False
 
 
-def test(work, samples, baseline):
+def test(work, samples, baseline, leak_checking=True):
     env = {k: v for k, v in os.environ.items() if not k.startswith('UATU_')}
     env.update(UATU_PRINT_MODEL='1', UATU_TIMEOUT_SEC='5',
-               ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1',
+               ASAN_OPTIONS=f'detect_leaks={int(leak_checking)}:halt_on_error=1:abort_on_error=1',
                UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
     sources = [ROOT / 'solver.cpp', ROOT / 'main.cpp']
     release = work / 'release'
@@ -434,6 +457,13 @@ def test(work, samples, baseline):
     for name, source in (('unit', UNIT), ('lbd_unit', LBD_UNIT)):
         (work / f'{name}.cpp').write_text(source)
         command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp', work / f'{name}.cpp', '-o', work / name])
+        unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
+        assert unit.returncode == 0, unit.stdout + unit.stderr
+        print(unit.stdout, flush=True)
+
+    for name in ('minimization', 'search_control'):
+        command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp',
+                 ROOT / 'tests' / f'{name}.cpp', '-o', work / name])
         unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
         assert unit.returncode == 0, unit.stdout + unit.stderr
         print(unit.stdout, flush=True)
@@ -535,9 +565,11 @@ def test(work, samples, baseline):
         print('BASELINE_FAILURES_REPRODUCED', flush=True)
     summary = {'correctness_formulas_per_build': len(cases), 'correctness_builds': ['release', 'ASan+UBSan'],
                'malformed_inputs_per_build': len(invalid), 'allocation_failure_points': failures,
-               'allocation_failure_stages': sorted(stages), 'leak_checking': True,
+               'allocation_failure_stages': sorted(stages), 'leak_checking': leak_checking,
                'counter_boundary_tests': 'passed; deliberately injected INT_MAX / UINT32_MAX / UINT64_MAX',
-               'lbd_reduction_tests': 'passed; ranking, eligibility, protections, window, dynamic LBD, compaction',
+               'minimization_tests': 'passed; recursive implication, failed-proof rollback, binary polarity, asserting literal',
+               'lbd_reduction_tests': 'passed; ranking, activity protection, dynamic LBD, nonzero-level trail/reason/watch compaction',
+               'search_control_tests': 'passed; restart blocking windows and thresholds, raw LBD, adaptive VSIDS bounds',
                'early_reduction_formulas': ['exhaustive 5-variable UNSAT', 'all-false-only 5-variable SAT'],
                'bounded_streaming_under_64_MiB': 'passed', 'controlled_OOM_under_32_MiB': 'passed',
                'baseline': baseline_evidence, 'all_passed': True}
@@ -550,16 +582,18 @@ def main():
     parser.add_argument('--samples', type=int, default=500)
     parser.add_argument('--build-dir', type=Path)
     parser.add_argument('--baseline')
+    parser.add_argument('--no-leak-check', action='store_true',
+                        help='disable only LeakSanitizer when process inspection is unavailable')
     args = parser.parse_args()
     if args.samples < 0:
         parser.error('--samples must be nonnegative')
     if args.build_dir:
         args.build_dir.mkdir(parents=True, exist_ok=True)
-        summary = test(args.build_dir.resolve(), args.samples, args.baseline)
+        summary = test(args.build_dir.resolve(), args.samples, args.baseline, not args.no_leak_check)
         (args.build_dir / 'regression.json').write_text(json.dumps(summary, indent=2) + '\n')
     else:
         with tempfile.TemporaryDirectory(prefix='uatu-regression-') as directory:
-            test(Path(directory), args.samples, args.baseline)
+            test(Path(directory), args.samples, args.baseline, not args.no_leak_check)
 
 
 if __name__ == '__main__':

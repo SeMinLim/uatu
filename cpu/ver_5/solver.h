@@ -7,6 +7,17 @@
 #include <vector>
 
 
+static constexpr size_t BINARY_MINIMIZATION_MAX_SIZE = 30;
+static constexpr int BINARY_MINIMIZATION_MAX_LBD = 6;
+static constexpr int GLUE_LBD = 2;
+static constexpr int LBD_PROTECTION_MAX = 30;
+static constexpr int RESTART_TRAIL_WINDOW = 5000;
+static constexpr uint64_t RESTART_BLOCKING_START = 10000;
+static constexpr double RESTART_BLOCKING_FACTOR = 1.4;
+static constexpr uint64_t VSIDS_DECAY_INTERVAL = 5000;
+static constexpr double VSIDS_DECAY_MAX = 0.95;
+
+
 #define ChildLeft(x) (x << 1 | 1)
 #define ChildRight(x) ((x + 1) << 1)
 #define Parent(x) ((x - 1) >> 1)
@@ -98,7 +109,7 @@ public:
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
-	// A dynamic LBD improvement can protect a clause for one reduction.
+	// A recent LBD improvement protects the clause for one reduction.
 	bool canBeDeleted;
     	// Literals in a clause
 	std::vector<int> literals;
@@ -106,7 +117,9 @@ public:
 	// Return a certain literal in a clause
     	int& operator [] ( int index ) { return literals[index]; }
 	// Initialize clause metadata and resize literal array
-	Clause( int sz ): lbd(0), activity(0.0), useCount(0), canBeDeleted(true) { literals.resize(sz); }
+	Clause( int sz ): lbd(0), activity(0.0), useCount(0), canBeDeleted(true) {
+		literals.resize(sz);
+	}
 };
 
 
@@ -143,6 +156,7 @@ public:
 	uint64_t conflicts = 0, decides = 0, unitPropagations = 0;
 	uint64_t bcpFunctionCalls = 0;
 	uint64_t restarts = 0, rephases = 0, reduces = 0;
+	uint64_t blockedRestarts = 0, varDecayUpdates = 0;
 	uint64_t rephase_inc = 0, rephase_limit = 0, reduce_limit = 0;
 	uint64_t reductionRuns = 0;
 	uint64_t deletedClauses = 0, minimizedLiterals = 0;
@@ -155,6 +169,9 @@ public:
             lbd_queue_size,                             // The number of LBDs in this queue
             lbd_queue_pos;                              // The position to save the next LBD
     	double fast_lbd_sum, slow_lbd_sum;              // Sum of the global and recent 50 LBDs
+	int trail_queue[RESTART_TRAIL_WINDOW];            // Conflict-time trail lengths
+	int trail_queue_size = 0, trail_queue_pos = 0;
+	uint64_t trail_queue_sum = 0;
 
 	int8_t *value = nullptr;                         // Current assignments
 	int8_t *local_best = nullptr;                    // Deepest saved trail
@@ -166,7 +183,7 @@ public:
 	unsigned int lbdStamp;
 
     	double *activity = nullptr;                    // The variables' score for VSIDS
-	double var_inc, var_decay;                       // Parameter for VSIDS
+	double var_inc = 1.0, var_decay = 0.8;            // Parameters for VSIDS
 	double clause_inc, clause_decay;                 // Parameters for learnt-clause activity
     	Heap vsids;                                    // Heap to select variable
 
@@ -187,6 +204,8 @@ public:
 	void updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD
     	int  analyze( int cref, int &backtrack_level, int &lbd ); // Conflict analysis
 	void backtrack( int backtrack_level );                    // Backtracking
+	void updateRestartBlocking();                             // Sample before conflict backtracking
+	void updateVSIDSDecay();                                  // Adjust after each counted conflict
     	void restart();                                         // Root backtrack and recent-LBD reset
     	void rephase();                                         // Install phase targets after a root backtrack
     	void reduce();                                          // Do reduce
@@ -195,7 +214,7 @@ public:
 private:
 	int parseStream( FILE *file );
 
-	// Reuse traversal storage across conflict analyses.
+	// Reuse reason-traversal storage across conflicts.
 	std::vector<int> minimizeStack;
 	std::vector<int> minimizeTouched;
 	bool isLearntLiteralRedundant( int variable, uint32_t abstractLevels,

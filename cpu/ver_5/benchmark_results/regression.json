@@ -1,0 +1,26 @@
+{
+  "correctness_formulas_per_build": 506,
+  "correctness_builds": [
+    "release",
+    "ASan+UBSan"
+  ],
+  "malformed_inputs_per_build": 19,
+  "allocation_failure_points": 31,
+  "allocation_failure_stages": [
+    "parsing",
+    "solving"
+  ],
+  "leak_checking": true,
+  "counter_boundary_tests": "passed; deliberately injected INT_MAX / UINT32_MAX / UINT64_MAX",
+  "minimization_tests": "passed; recursive implication, failed-proof rollback, binary polarity, asserting literal",
+  "lbd_reduction_tests": "passed; ranking, activity protection, dynamic LBD, nonzero-level trail/reason/watch compaction",
+  "search_control_tests": "passed; restart blocking windows and thresholds, raw LBD, adaptive VSIDS bounds",
+  "early_reduction_formulas": [
+    "exhaustive 5-variable UNSAT",
+    "all-false-only 5-variable SAT"
+  ],
+  "bounded_streaming_under_64_MiB": "passed",
+  "controlled_OOM_under_32_MiB": "passed",
+  "baseline": null,
+  "all_passed": true
+}
