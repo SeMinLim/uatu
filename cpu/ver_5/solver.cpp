@@ -14,6 +14,10 @@
 static const size_t BINARY_MINIMIZATION_MAX_SIZE = 30;
 static const int BINARY_MINIMIZATION_MAX_LBD = 6;
 
+// Glucose 3.0 learned-clause retention thresholds.
+static const int GLUE_LBD = 2;
+static const int LBD_PROTECTION_MAX = 30;
+
 
 //// Required functions
 // Elapsed time checker
@@ -439,16 +443,20 @@ int Solver::calculateClauseLBD( const Clause &clause ) {
 
 // Update learnt-clause usage and dynamic LBD
 void Solver::updateClauseQuality( int cref ) {
-        if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
+	if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
 
-        bumpClauseActivity(cref);
+	bumpClauseActivity(cref);
 
-        Clause &clause = clauseDB[cref];
-        const int currentLBD = calculateClauseLBD(clause);
-        if ( currentLBD > 0 && (clause.lbd == 0 || currentLBD < clause.lbd) ) {
-                clause.lbd = currentLBD;
-                dynamicLBDUpdates ++;
-        }
+	Clause &clause = clauseDB[cref];
+	if ( clause.lbd <= GLUE_LBD ) return;
+
+	const int currentLBD = calculateClauseLBD(clause);
+	if ( currentLBD > 0 && currentLBD + 1 < clause.lbd ) {
+		// Use the old LBD to decide whether this improvement earns a grace cycle.
+		if ( clause.lbd <= LBD_PROTECTION_MAX ) clause.canBeDeleted = false;
+		clause.lbd = currentLBD;
+		dynamicLBDUpdates ++;
+	}
 }
 
 // Follow reason chains without using the C++ call stack.
@@ -766,30 +774,41 @@ void Solver::reduce() {
                 if ( clause >= origin_clauses && clause < oldSize ) locked[clause] = 1;
         }
 
-        std::vector<int> candidates;
-        candidates.reserve(oldSize - origin_clauses);
-        for ( int i = origin_clauses; i < oldSize; i ++ ) {
-                if ( !locked[i] && clauseDB[i].lbd >= 5 ) candidates.push_back(i);
-        }
+	std::vector<int> candidates;
+	candidates.reserve(oldSize - origin_clauses);
+	for ( int i = origin_clauses; i < oldSize; i ++ ) candidates.push_back(i);
 
-        // Low activity means the clause contributed less to recent conflict analysis.
-        std::sort(candidates.begin(), candidates.end(), [&]( int a, int b ) {
-                if ( clauseDB[a].activity != clauseDB[b].activity ) {
-                        return clauseDB[a].activity < clauseDB[b].activity;
-                }
-                if ( clauseDB[a].lbd != clauseDB[b].lbd ) {
-                        return clauseDB[a].lbd > clauseDB[b].lbd;
-                }
-                if ( clauseDB[a].literals.size() != clauseDB[b].literals.size() ) {
-                        return clauseDB[a].literals.size() > clauseDB[b].literals.size();
-                }
-                return a < b;
-        });
+	// Rank the whole learned database: worst LBD first, activity only breaks ties.
+	std::sort(candidates.begin(), candidates.end(), [&]( int a, int b ) {
+		const bool aBinary = clauseDB[a].literals.size() == 2;
+		const bool bBinary = clauseDB[b].literals.size() == 2;
+		if ( aBinary != bBinary ) return !aBinary;
+		if ( clauseDB[a].lbd != clauseDB[b].lbd ) {
+			return clauseDB[a].lbd > clauseDB[b].lbd;
+		}
+		if ( clauseDB[a].activity != clauseDB[b].activity ) {
+			return clauseDB[a].activity < clauseDB[b].activity;
+		}
+		return a < b;
+	});
 
-        std::vector<unsigned char> erase(oldSize, 0);
-        const size_t deleteCount = candidates.size() / 2;
-        for ( size_t i = 0; i < deleteCount; i ++ ) erase[candidates[i]] = 1;
-        deletedClauses += static_cast<uint64_t>(deleteCount);
+	std::vector<unsigned char> erase(oldSize, 0);
+	size_t deleteLimit = candidates.size() / 2;
+	uint64_t deleteCount = 0;
+	for ( size_t i = 0; i < candidates.size(); i ++ ) {
+		const int cref = candidates[i];
+		Clause &clause = clauseDB[cref];
+		if ( i < deleteLimit && clause.literals.size() > 2 &&
+		     clause.lbd > GLUE_LBD && !locked[cref] && clause.canBeDeleted ) {
+			erase[cref] = 1;
+			deleteCount ++;
+		} else {
+			// Improved clauses survive once without consuming a deletion slot.
+			if ( !clause.canBeDeleted && deleteLimit < candidates.size() ) deleteLimit ++;
+			clause.canBeDeleted = true;
+		}
+	}
+	deletedClauses += deleteCount;
 
         int newSize = origin_clauses;
         for ( int i = 0; i < origin_clauses; i ++ ) reduceMap[i] = i;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Ver4 sanity-fix regressions. Requires g++, Linux prlimit, and Python 3.
+"""Run Ver5 solver regressions. Requires g++, Linux prlimit, and Python 3.
 
 No competition performance score is computed here. Counter probes deliberately
 start near integer boundaries; production solver initialization remains zero.
@@ -88,10 +88,10 @@ int main() {
 	}
 	{
 		Solver s{};
-		s.vars = 2;
+		s.vars = 3;
 		s.initialize();
-		std::vector<int> a{1, 2};
-		std::vector<int> b{-1, 2};
+		std::vector<int> a{1, 2, 3};
+		std::vector<int> b{-1, 2, 3};
 		s.clauseDB[s.add_clause(a)].lbd = 10;
 		s.clauseDB[s.add_clause(b)].lbd = 9;
 		s.deletedClauses = INT_MAX;
@@ -100,6 +100,233 @@ int main() {
 		assert(s.clauseDB.size() == 1);
 	}
 	printf( "COUNTER_AND_STAMP_REGRESSIONS_PASSED\n" );
+}
+'''
+
+LBD_UNIT = r'''#include "solver.h"
+#include <cassert>
+
+// Verify that compaction retains both watches and every assigned reason.
+static void checkClauseReferences( Solver &s ) {
+	std::vector<int> watchCount(s.clauseDB.size(), 0);
+	for ( int literal = -s.vars; literal <= s.vars; literal ++ ) {
+		if ( literal == 0 ) continue;
+		for ( const WL &watch : s.watched_literals[s.vars + literal] ) {
+			assert(watch.clauseIdx >= 0);
+			assert(watch.clauseIdx < static_cast<int>(s.clauseDB.size()));
+			const Clause &clause = s.clauseDB[watch.clauseIdx];
+			assert(clause.literals[0] == -literal || clause.literals[1] == -literal);
+			bool blockerFound = false;
+			for ( int member : clause.literals ) {
+				if ( member == watch.blocker ) blockerFound = true;
+			}
+			assert(blockerFound);
+			watchCount[watch.clauseIdx] ++;
+		}
+	}
+	for ( int count : watchCount ) assert(count == 2);
+	for ( int literal : s.trail ) {
+		const int reason = s.reason[abs(literal)];
+		if ( reason == -1 ) continue;
+		assert(reason >= 0 && reason < static_cast<int>(s.clauseDB.size()));
+		bool literalFound = false;
+		for ( int member : s.clauseDB[reason].literals ) {
+			if ( member == literal ) literalFound = true;
+		}
+		assert(literalFound);
+	}
+}
+
+// All assignments are forbidden, except the all-false assignment in SAT mode.
+static void solveWithEarlyReduction( bool satisfiable ) {
+	Solver s{};
+	s.vars = 5;
+	s.initialize();
+	std::vector<std::vector<int>> formula;
+	for ( int mask = 0; mask < 32; mask ++ ) {
+		if ( satisfiable && mask == 0 ) continue;
+		std::vector<int> clause;
+		for ( int variable = 1; variable <= s.vars; variable ++ ) {
+			clause.push_back((mask & (1 << (variable - 1))) ? -variable : variable);
+		}
+		formula.push_back(clause);
+		s.add_clause(clause);
+	}
+	s.origin_clauses = static_cast<int>(s.clauseDB.size());
+	// Duplicate originals are sound learnt clauses for the deletion exercise.
+	for ( int i = 0; i < 8; i ++ ) {
+		s.clauseDB[s.add_clause(formula[i])].lbd = 5;
+	}
+	s.reduce_limit = 1;
+	assert(s.solve() == (satisfiable ? 10 : 20));
+	assert(s.conflicts > 0 && s.reductionRuns > 0 && s.deletedClauses > 0);
+	if ( satisfiable ) {
+		for ( const std::vector<int> &clause : formula ) {
+			bool satisfied = false;
+			for ( int literal : clause ) {
+				if ( s.value[abs(literal)] == (literal > 0 ? 1 : -1) ) satisfied = true;
+			}
+			assert(satisfied);
+		}
+	}
+	checkClauseReferences(s);
+}
+
+int main() {
+	{
+		// LBD outranks activity; equal-LBD ties use activity, then clause ID.
+		Solver s{};
+		s.vars = 8;
+		s.initialize();
+		const int lbds[] = {8, 7, 6, 6, 6, 4};
+		const double activities[] = {1000.0, 0.0, 1.0, 1.0, 3.0, 0.0};
+		for ( int i = 0; i < 6; i ++ ) {
+			std::vector<int> clause{1, 2, 3};
+			if ( i == 3 ) clause.push_back(4);
+			const int id = s.add_clause(clause);
+			s.clauseDB[id].lbd = lbds[i];
+			s.clauseDB[id].activity = activities[i];
+			assert(s.clauseDB[id].canBeDeleted);
+		}
+		s.reduce();
+		assert(s.deletedClauses == 3 && s.clauseDB.size() == 3);
+		for ( int i = 0; i < 3; i ++ ) assert(s.reduceMap[i] == -1);
+		for ( int i = 3; i < 6; i ++ ) assert(s.reduceMap[i] == i - 3);
+		checkClauseReferences(s);
+	}
+	{
+		// LBD 3 and 4 are eligible; glue clauses contribute to the half-DB window.
+		Solver s{};
+		s.vars = 4;
+		s.initialize();
+		const int lbds[] = {4, 3, 2, 2};
+		for ( int i = 0; i < 4; i ++ ) {
+			std::vector<int> clause{1, 2, 3, 4};
+			s.clauseDB[s.add_clause(clause)].lbd = lbds[i];
+		}
+		s.reduce();
+		assert(s.deletedClauses == 2 && s.clauseDB.size() == 2);
+		assert(s.reduceMap[0] == -1 && s.reduceMap[1] == -1);
+		assert(s.reduceMap[2] == 0 && s.reduceMap[3] == 1);
+		checkClauseReferences(s);
+	}
+	for ( int binary = 0; binary <= 1; binary ++ ) {
+		// Unlocked binary and glue clauses remain protected inside the window.
+		Solver s{};
+		s.vars = 3;
+		s.initialize();
+		for ( int i = 0; i < 2; i ++ ) {
+			std::vector<int> clause{1, 2};
+			if ( !binary ) clause.push_back(3);
+			s.clauseDB[s.add_clause(clause)].lbd = binary ? 99 : 2;
+		}
+		s.reduce();
+		assert(s.deletedClauses == 0 && s.clauseDB.size() == 2);
+		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == 1);
+		checkClauseReferences(s);
+	}
+	{
+		// Preserve originals, glue, binary clauses and root reasons while remapping.
+		Solver s{};
+		s.vars = 7;
+		s.initialize();
+		std::vector<std::vector<int>> clauses{
+			{-1, 2}, {-3, 4, 5}, {3, -4, 5}, {3, -1, -2},
+			{2, 4, 5}, {-3, 6}, {-6, 7}
+		};
+		const int lbds[] = {100, 9, 8, 7, 2, 99, 99};
+		for ( int i = 0; i < 7; i ++ ) {
+			s.clauseDB[s.add_clause(clauses[i])].lbd = lbds[i];
+		}
+		s.origin_clauses = 1;
+		s.assign(1, 0, -1);
+		assert(s.propagate() == -1);
+		assert(s.reason[2] == 0 && s.reason[3] == 3);
+		assert(s.reason[6] == 5 && s.reason[7] == 6);
+		s.decVarInTrail.push_back(static_cast<int>(s.trail.size()));
+		s.assign(-4, 1, -1);
+		assert(s.propagate() == -1 && s.reason[5] == 1);
+		s.reduce();
+		assert(s.deletedClauses == 2 && s.clauseDB.size() == 5);
+		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == -1 && s.reduceMap[2] == -1);
+		assert(s.decVarInTrail.empty() && s.value[4] == 0 && s.value[5] == 0);
+		assert(s.reason[4] == -1 && s.reason[5] == -1);
+		assert(s.reason[2] == 0 && s.reason[3] == 1);
+		assert(s.reason[6] == 3 && s.reason[7] == 4);
+		checkClauseReferences(s);
+		s.assign(-4, 0, -1);
+		assert(s.propagate() == -1 && s.value[5] == 0);
+		checkClauseReferences(s);
+	}
+	{
+		// Improved clauses survive one reduction; protection extends the window.
+		Solver s{};
+		s.vars = 6;
+		s.initialize();
+		for ( int i = 0; i < 4; i ++ ) {
+			std::vector<int> clause{1, 2, 3, 4, 5, 6};
+			const int id = s.add_clause(clause);
+			s.clauseDB[id].lbd = i == 0 ? 6 : 3;
+			s.clauseDB[id].activity = 10.0 * i;
+		}
+		for ( int variable = 1; variable <= 6; variable ++ ) {
+			s.level[variable] = (variable - 1) % 3 + 1;
+		}
+		s.updateClauseQuality(0);
+		assert(s.clauseDB[0].lbd == 3 && !s.clauseDB[0].canBeDeleted);
+		assert(s.clauseDB[0].activity == 1.0 && s.clauseDB[0].useCount == 1);
+		assert(s.dynamicLBDUpdates == 1 && s.clauseActivityBumps == 1);
+		// Also reset protection on a survivor outside the deletion window.
+		s.clauseDB[3].canBeDeleted = false;
+		for ( int variable = 1; variable <= 6; variable ++ ) s.level[variable] = 0;
+		s.reduce();
+		assert(s.deletedClauses == 2 && s.clauseDB.size() == 2);
+		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == -1 && s.reduceMap[2] == -1);
+		assert(s.reduceMap[3] == 1);
+		assert(s.clauseDB[0].canBeDeleted && s.clauseDB[1].canBeDeleted);
+		s.reduce();
+		assert(s.deletedClauses == 3 && s.clauseDB.size() == 1);
+		assert(s.reduceMap[0] == -1 && s.reduceMap[1] == 0);
+		checkClauseReferences(s);
+	}
+	{
+		// Protection uses pre-improvement LBD; one-level changes do not update.
+		Solver s{};
+		s.vars = 31;
+		s.initialize();
+		const int lbds[] = {30, 31, 4, 2, 0, 7};
+		for ( int i = 0; i < 6; i ++ ) {
+			std::vector<int> clause;
+			for ( int variable = 1; variable <= 31; variable ++ ) clause.push_back(variable);
+			s.clauseDB[s.add_clause(clause)].lbd = lbds[i];
+		}
+		s.origin_clauses = 1;
+		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = (variable - 1) % 3 + 1;
+		s.updateClauseQuality(-1);
+		s.updateClauseQuality(0);
+		s.updateClauseQuality(6);
+		assert(s.clauseActivityBumps == 0 && s.dynamicLBDUpdates == 0);
+		s.origin_clauses = 0;
+		for ( int i = 0; i < 5; i ++ ) s.updateClauseQuality(i);
+		assert(s.clauseDB[0].lbd == 3 && !s.clauseDB[0].canBeDeleted);
+		assert(s.clauseDB[1].lbd == 3 && s.clauseDB[1].canBeDeleted);
+		assert(s.clauseDB[2].lbd == 4 && s.clauseDB[2].canBeDeleted);
+		assert(s.clauseDB[3].lbd == 2 && s.clauseDB[3].canBeDeleted);
+		assert(s.clauseDB[4].lbd == 0 && s.clauseDB[4].canBeDeleted);
+		assert(s.dynamicLBDUpdates == 2 && s.clauseActivityBumps == 5);
+		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = 0;
+		s.updateClauseQuality(5);
+		assert(s.clauseDB[5].lbd == 7 && s.clauseDB[5].canBeDeleted);
+		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = 1;
+		s.updateClauseQuality(1);
+		s.updateClauseQuality(3);
+		assert(s.clauseDB[1].lbd == 1 && !s.clauseDB[1].canBeDeleted);
+		assert(s.clauseDB[3].lbd == 2);
+		assert(s.dynamicLBDUpdates == 3 && s.clauseActivityBumps == 8);
+	}
+	solveWithEarlyReduction(false);
+	solveWithEarlyReduction(true);
+	printf( "LBD_REDUCTION_REGRESSIONS_PASSED\n" );
 }
 '''
 
@@ -204,11 +431,12 @@ def test(work, samples, baseline):
     command(['g++', *FLAGS, '-O3', '-DNDEBUG', *sources, '-o', release])
     command(['g++', *FLAGS, *SAN, *sources, '-o', sanitized])
     command(['g++', *FLAGS, '-O2', '-DUATU_PROFILE_BCP=1', *sources, '-o', work / 'profile'])
-    (work / 'unit.cpp').write_text(UNIT)
-    command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp', work / 'unit.cpp', '-o', work / 'unit'])
-    unit = subprocess.run([str(work / 'unit')], env=env, capture_output=True, text=True, timeout=20)
-    assert unit.returncode == 0, unit.stdout + unit.stderr
-    print(unit.stdout, flush=True)
+    for name, source in (('unit', UNIT), ('lbd_unit', LBD_UNIT)):
+        (work / f'{name}.cpp').write_text(source)
+        command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp', work / f'{name}.cpp', '-o', work / name])
+        unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
+        assert unit.returncode == 0, unit.stdout + unit.stderr
+        print(unit.stdout, flush=True)
 
     cases = [(0, []), (0, [[]]), (1, [[1]]), (1, [[1], [-1]]),
              (2, [[-1, 2], [1]]), (2, [[1, 2], [1, -2], [-1, 2], [-1, -2]])]
@@ -309,6 +537,8 @@ def test(work, samples, baseline):
                'malformed_inputs_per_build': len(invalid), 'allocation_failure_points': failures,
                'allocation_failure_stages': sorted(stages), 'leak_checking': True,
                'counter_boundary_tests': 'passed; deliberately injected INT_MAX / UINT32_MAX / UINT64_MAX',
+               'lbd_reduction_tests': 'passed; ranking, eligibility, protections, window, dynamic LBD, compaction',
+               'early_reduction_formulas': ['exhaustive 5-variable UNSAT', 'all-false-only 5-variable SAT'],
                'bounded_streaming_under_64_MiB': 'passed', 'controlled_OOM_under_32_MiB': 'passed',
                'baseline': baseline_evidence, 'all_passed': True}
     print('REGRESSION_SUMMARY=' + json.dumps(summary, sort_keys=True), flush=True)

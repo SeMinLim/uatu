@@ -1,19 +1,28 @@
 # Uatu Ver. 5
 
-Based on `cpu/ver_4` at commit `ef7ee281b770758a318329501d85061fc563b496`, with only the first planned heuristic extension: recursive learnt-clause minimization followed by binary-resolution minimization. `cpu/ver_4` is unchanged.
+Based on `cpu/ver_4` at commit `ef7ee281b770758a318329501d85061fc563b496`, with two planned heuristic extensions: recursive and binary-resolution learnt-clause minimization, followed by Glucose-style LBD-centered learned-clause management. `cpu/ver_4` is unchanged.
 
 - Recursive minimization replaces the one-step reason check. It follows reason chains using reusable explicit-stack storage, caches successful traversals within one analysis, and rolls back temporary marks after a failed traversal. The asserting literal is retained.
 - Binary-resolution minimization then processes clauses with at most 30 literals and LBD at most 6. It resolves against existing binary clauses containing the asserting literal, using read-only access to the existing watcher lists. Both original and learned binary clauses are eligible.
 - Final LBD and the backtrack level are calculated after both passes. The existing `Minimized Literals` counter includes literals removed by either pass.
 
-BCP, VSIDS, clause activity and deletion, dynamic LBD updates, restart and rephase policies, parsing, CLI output, build targets, and inherited regression scripts are otherwise unchanged. Neither minimization pass performs additional BCP calls. No preprocessing or vivification is added.
+The second extension adapts the learned-clause retention policy from [Glucose 3.0](https://github.com/audemard/glucose/blob/3.0/core/Solver.cc):
+
+- Reduction ranks nonbinary learned clauses by decreasing LBD, using increasing clause activity only to break equal-LBD ties. Binary clauses sort last. The initial deletion window is half of **all learned clauses**, rather than half of a filtered candidate set.
+- Original clauses, binary clauses, glue clauses with LBD at most 2, and clauses serving as current assignment reasons are protected. Learned clauses with LBD 3 or 4 can now be deleted when they fall inside the deletion window.
+- During conflict analysis, an LBD decrease of at least two updates a learned clause's LBD. If its **previous** LBD was at most 30, the improvement also protects it for the next reduction. That protection extends the deletion window by one and is then cleared for surviving clauses.
+- Uatu retains its existing reduction schedule: initially 8192 conflicts between reductions, increasing by 512 after each reduction. Root backtracking, database compaction, watcher updates, and reason-index remapping are retained. This is an adaptation of the Glucose retention policy, not its reduction scheduler.
+
+BCP, variable VSIDS, clause activity bumping and decay, restart and rephase policies, parsing, CLI output, and build targets retain their preceding behavior. Neither extension adds BCP calls. Restart blocking, adaptive VSIDS, preprocessing, and vivification remain later steps.
 
 ```bash
 make
 make run CNF=/path/to/instance.cnf TIMEOUT=1000
 ```
 
-## SAT Competition 2025: 100-instance comparison
+## SAT Competition 2025: historical stage-1 comparison
+
+The following measurements used the **stage-1 source, before the LBD management update**, at commit `c22c2c350f63468b1608eb7283806ebef2393831`. Performance of the stage-2 update has not been measured.
 
 1. **Did Uatu ver_5 outperform MiniSAT? No.** On this sample with a 1000-second timeout, Uatu's PAR-2 score was **11.98% higher (worse)** than MiniSAT's.
 2. **PAR-2 improvement factor: none.** The ratio `PAR-2(MiniSAT) / PAR-2(Uatu)` was **0.893006**, below the 1.0 threshold for an improvement.

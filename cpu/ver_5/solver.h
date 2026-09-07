@@ -98,13 +98,15 @@ public:
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
+	// A dynamic LBD improvement can protect a clause for one reduction.
+	bool canBeDeleted;
     	// Literals in a clause
 	std::vector<int> literals;
 	// Overloading array operator
 	// Return a certain literal in a clause
     	int& operator [] ( int index ) { return literals[index]; }
 	// Initialize clause metadata and resize literal array
-    	Clause( int sz ): lbd(0), activity(0.0), useCount(0) { literals.resize(sz); }
+	Clause( int sz ): lbd(0), activity(0.0), useCount(0), canBeDeleted(true) { literals.resize(sz); }
 };
 
 
