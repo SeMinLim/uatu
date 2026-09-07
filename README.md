@@ -64,6 +64,23 @@ Use `bash download.sh download` and `bash download.sh extract` to perform the tw
 
 SAT Competition 2024 is used for heuristic development and parameter tuning. SAT Competition 2025 is reserved as a frozen final-evaluation set to avoid benchmark overfitting.
 
+<!-- BEGIN SAT2025 VER5 MINISAT 100 -->
+## MiniSAT Comparison (SAT Competition 2025)
+
+On these 100 sampled instances, **Uatu Ver. 5 did not outperform MiniSAT**. The mean PAR-2 ratio (MiniSAT / Uatu) was **0.9523×**.
+
+| Solver | Solved / 100 | Mean PAR-2 (s) |
+|---|---:|---:|
+| Uatu Ver. 5 | 27 | 1507.454 |
+| MiniSAT 2.2.0 | 31 | 1435.545 |
+
+100 of 400 Main Track instances were sampled uniformly without replacement (seed `20260908`). Limits: **1000 seconds wall clock**, **12 GiB**, one thread. Each pair ran sequentially on the same runner and pinned CPU core, with alternating solver order. MiniSAT used `2.2.0 simp` with default preprocessing.
+
+Mean PAR-2 averages validated solve wall times and a 2000-second penalty per timeout or memory limit. **Lower is better.**
+
+[Per-instance results and scores](cpu/ver_5/benchmark_results/sat2025_stage3_vs_minisat_100.json) · [Hardware and measurement details](cpu/ver_5/README.md#minisat-comparison-sat-competition-2025)
+<!-- END SAT2025 VER5 MINISAT 100 -->
+
 ---
 
 ## Mandatory Papers
