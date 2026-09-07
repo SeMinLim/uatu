@@ -20,26 +20,26 @@ make
 make run CNF=/path/to/instance.cnf TIMEOUT=1000
 ```
 
-## SAT Competition 2025: historical stage-1 comparison
+## SAT Competition 2025: stage-2 comparison
 
-The following measurements used the **stage-1 source, before the LBD management update**, at commit `c22c2c350f63468b1608eb7283806ebef2393831`. Performance of the stage-2 update has not been measured.
+These measurements used the **stage-2 source, including Glucose-style LBD-centered learned-clause management**, at commit `8eb756b7284053522bd2314f17a2a1cf8c567fe1`.
 
-1. **Did Uatu ver_5 outperform MiniSAT? No.** On this sample with a 1000-second timeout, Uatu's PAR-2 score was **11.98% higher (worse)** than MiniSAT's.
-2. **PAR-2 improvement factor: none.** The ratio `PAR-2(MiniSAT) / PAR-2(Uatu)` was **0.893006**, below the 1.0 threshold for an improvement.
+1. **Did Uatu ver_5 outperform MiniSAT? No.** On this 100-instance sample with a 1000-second timeout, Uatu's PAR-2 score was **14.15% higher (worse)** than MiniSAT's.
+2. **PAR-2 improvement factor: none.** The ratio `PAR-2(MiniSAT) / PAR-2(Uatu)` was **0.876077**, below the 1.0 threshold for an improvement.
 
 | Solver | Solved / 100 | Timeouts | Other unsolved | PAR-2 total (s) | Mean PAR-2 (s) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Uatu ver_5 | 31 | 67 | 2 | 148171.598362 | 1481.715984 |
-| MiniSAT | 38 | 60 | 2 | 132318.134196 | 1323.181342 |
+| Uatu ver_5 | 29 | 69 | 2 | 149094.052614 | 1490.940526 |
+| MiniSAT | 40 | 58 | 2 | 130617.878262 | 1306.178783 |
 
-PAR-2 assigns the measured runtime to each solved instance and **2000 seconds** to every unsolved instance, including memory limits and unknown results. Mean PAR-2 is the total divided by 100; lower is better. Uatu's two other unsolved runs reached the memory limit; MiniSAT's two returned no solution.
+[PAR-2](https://satcompetition.github.io/2025/tracks.html) assigns the measured runtime to each solved instance and **2000 seconds** to every unsolved instance. Mean PAR-2 is `(sum of solved runtimes + 2000 * unsolved count) / 100`; lower is better. Uatu's two other unsolved runs reached the memory limit; MiniSAT's two returned no solution (`unknown`), so these are not counted as timeouts.
 
 ### Measurement conditions
 
-- **Sample:** 100 instances selected uniformly without replacement from the 400-instance [official 2025 Main Track manifest](https://benchmark-database.de/getinstances?context=cnf&query=track%3Dmain_2025), using Python `random.Random(20260906).sample(population_sorted_by_GBD_hash, 100)`. No filtering by size, difficulty, or result.
-- **Uatu source:** [`c22c2c350f63468b1608eb7283806ebef2393831`](https://github.com/SeMinLim/uatu/commit/c22c2c350f63468b1608eb7283806ebef2393831), with source and Makefile identical to `main` at `319ee6d95d6abc4df2880df2f7a17a47aeb55b82`. Built with `make -C cpu/ver_5 release`, GCC 11.4.0, `-O3 -DNDEBUG`, and BCP profiling disabled.
+- **Sample:** 100 instances selected uniformly without replacement from the 400-instance [official 2025 Main Track manifest](https://benchmark-database.de/getinstances?context=cnf&query=track%3Dmain_2025), using Python `random.Random(20260906).sample(population_sorted_by_GBD_hash, 100)`. No filtering by size, difficulty, or result. This preserves the previously drawn random sample; **both solvers were measured again** for this comparison.
+- **Uatu source:** [`8eb756b7284053522bd2314f17a2a1cf8c567fe1`](https://github.com/SeMinLim/uatu/commit/8eb756b7284053522bd2314f17a2a1cf8c567fe1). Built with `make -C cpu/ver_5 release`, GCC 11.4.0, `-O3 -DNDEBUG`, and BCP profiling disabled. Source and binary SHA-256 identities were checked.
 - **Baseline:** Ubuntu MiniSAT package `1:2.2.1-5build2`, default preprocessing, `-verb=0`.
 - **Execution:** 1000-second external wall-clock timeout and 12 GiB address-space limit per solver. Each pair ran sequentially on the same pinned logical CPU, with alternating solver order. Different pairs used heterogeneous GitHub-hosted Ubuntu 22.04 runners. Timing includes parsing and model output; downloads, decompression, and model checking are excluded.
-- **Answer checks:** SAT models were checked against the CNF. UNSAT answers were checked against known answers or agreement between solvers, without proof checking. All 100 pairs were present, with no detected answer errors.
+- **Answer checks:** SAT models were checked against the original CNF. UNSAT answers were checked against known answers or agreement between solvers, without proof checking. All 100 unique pairs were present, with no detected runtime or answer errors in either solver.
 
-Completed on **2026-09-06 (UTC)**. The [evaluation run](https://github.com/SeMinLim/uatu/actions/runs/34039208713) contains the sample manifest, build identity, per-instance measurements, and final summary (`c22-paired-final` artifact).
+Completed on **2026-09-07 (UTC)**. The [per-instance results and provenance](benchmark_results/sat2025_stage2_100.json) preserve all 200 solver measurements, the sample, build identity, source hashes, runner information, and final summary. The [evaluation run](https://github.com/SeMinLim/uatu/actions/runs/34083297444) also contains execution logs and the `lbd-paired-final` artifact.
