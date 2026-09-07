@@ -1,0 +1,402 @@
+[
+  {
+    "index": 0,
+    "hash": "46355da785714f239393e7630020cae3",
+    "expected": "unknown",
+    "filename": "REGRandom-K4-L1-Seed40.sanitized.cnf.xz",
+    "family": "reg-n",
+    "url": "https://benchmark-database.de/file/46355da785714f239393e7630020cae3?context=cnf"
+  },
+  {
+    "index": 1,
+    "hash": "3c0db78733bb05b9d1e9d7627b2e8f38",
+    "expected": "unsat",
+    "filename": "rook-52-0-1.cnf.xz",
+    "family": "rooks",
+    "url": "https://benchmark-database.de/file/3c0db78733bb05b9d1e9d7627b2e8f38?context=cnf"
+  },
+  {
+    "index": 2,
+    "hash": "84282cd481f7614f444951064c707030",
+    "expected": "sat",
+    "filename": "simon-r20-1.sanitized.cnf.xz",
+    "family": "cryptography-simon",
+    "url": "https://benchmark-database.de/file/84282cd481f7614f444951064c707030?context=cnf"
+  },
+  {
+    "index": 3,
+    "hash": "41f507717c7c4553d23cd0cd1fc40104",
+    "expected": "unknown",
+    "filename": "1-ET-512-K-120.sanitized.cnf.xz",
+    "family": "independent-set",
+    "url": "https://benchmark-database.de/file/41f507717c7c4553d23cd0cd1fc40104?context=cnf"
+  },
+  {
+    "index": 4,
+    "hash": "f0753a43fd48018b408d64ea68a4a924",
+    "expected": "unsat",
+    "filename": "Nb54T6.cnf.xz",
+    "family": "polynomial-multiplication",
+    "url": "https://benchmark-database.de/file/f0753a43fd48018b408d64ea68a4a924?context=cnf"
+  },
+  {
+    "index": 5,
+    "hash": "c86b261162cef181dc513963a8acb77f",
+    "expected": "sat",
+    "filename": "ITC2021_Middle_9.xml.cnf.xz",
+    "family": "scheduling",
+    "url": "https://benchmark-database.de/file/c86b261162cef181dc513963a8acb77f?context=cnf"
+  },
+  {
+    "index": 6,
+    "hash": "4d6e18e506b7e62d3f32cc775219be24",
+    "expected": "sat",
+    "filename": "GP_100_951_33.cnf.xz",
+    "family": "graceful-production",
+    "url": "https://benchmark-database.de/file/4d6e18e506b7e62d3f32cc775219be24?context=cnf"
+  },
+  {
+    "index": 7,
+    "hash": "8af30680e9329ae30c2cdbece636c470",
+    "expected": "sat",
+    "filename": "simon-r23-0.sanitized.cnf.xz",
+    "family": "cryptography-simon",
+    "url": "https://benchmark-database.de/file/8af30680e9329ae30c2cdbece636c470?context=cnf"
+  },
+  {
+    "index": 8,
+    "hash": "5246b7b99ba005af421d86299f7d26d0",
+    "expected": "unsat",
+    "filename": "b15.cnf.xz",
+    "family": "belpyramid-puzzle",
+    "url": "https://benchmark-database.de/file/5246b7b99ba005af421d86299f7d26d0?context=cnf"
+  },
+  {
+    "index": 9,
+    "hash": "9b998be0c639d06988c4902eb125c0b7",
+    "expected": "sat",
+    "filename": "frb35-17-5_ext.cnf.xz",
+    "family": "random-csp",
+    "url": "https://benchmark-database.de/file/9b998be0c639d06988c4902eb125c0b7?context=cnf"
+  },
+  {
+    "index": 10,
+    "hash": "24bde22f729a988fb2394b644cb60d39",
+    "expected": "sat",
+    "filename": "SC25_Timetable_C_481_E_49_Cl_32_D_7_T_58.normalised.cnf.xz",
+    "family": "school-timetabling",
+    "url": "https://benchmark-database.de/file/24bde22f729a988fb2394b644cb60d39?context=cnf"
+  },
+  {
+    "index": 11,
+    "hash": "47f5872181a581dff34eb33123fe3242",
+    "expected": "unsat",
+    "filename": "b17.cnf.xz",
+    "family": "belpyramid-puzzle",
+    "url": "https://benchmark-database.de/file/47f5872181a581dff34eb33123fe3242?context=cnf"
+  },
+  {
+    "index": 12,
+    "hash": "35748015c5f16c9ee7e4d1894af497a0",
+    "expected": "unsat",
+    "filename": "oski15a01b39s_opt.cnf.xz",
+    "family": "equivalence-checking",
+    "url": "https://benchmark-database.de/file/35748015c5f16c9ee7e4d1894af497a0?context=cnf"
+  },
+  {
+    "index": 13,
+    "hash": "6ef090a10c10352090100af7b6654c31",
+    "expected": "sat",
+    "filename": "summle_X8638_steps7_I1-2-2-4-4-8-25-100.cnf.xz",
+    "family": "summle",
+    "url": "https://benchmark-database.de/file/6ef090a10c10352090100af7b6654c31?context=cnf"
+  },
+  {
+    "index": 14,
+    "hash": "9f38c92ba81c754103444edc15c1f44b",
+    "expected": "sat",
+    "filename": "simon-r21-1.sanitized.cnf.xz",
+    "family": "cryptography-simon",
+    "url": "https://benchmark-database.de/file/9f38c92ba81c754103444edc15c1f44b?context=cnf"
+  },
+  {
+    "index": 15,
+    "hash": "59fc779feee4390b57502814d424e0d6",
+    "expected": "sat",
+    "filename": "jgiraldezlevy.2200.9086.08.40.149-sr2015.cnf.xz",
+    "family": "random-modularity",
+    "url": "https://benchmark-database.de/file/59fc779feee4390b57502814d424e0d6?context=cnf"
+  },
+  {
+    "index": 16,
+    "hash": "b1c8eaa002ac2fa1c8bfd1002738e78e",
+    "expected": "unknown",
+    "filename": "cliquecolouring_n15_k7_c6.sanitized.cnf.xz",
+    "family": "coloring",
+    "url": "https://benchmark-database.de/file/b1c8eaa002ac2fa1c8bfd1002738e78e?context=cnf"
+  },
+  {
+    "index": 17,
+    "hash": "75cc1f02ed4b8c06553ef579b163e1be",
+    "expected": "unsat",
+    "filename": "SCPC-500-14.cnf.xz",
+    "family": "set-covering",
+    "url": "https://benchmark-database.de/file/75cc1f02ed4b8c06553ef579b163e1be?context=cnf"
+  },
+  {
+    "index": 18,
+    "hash": "053e06424279f5cfec8bb14dfa9af23c",
+    "expected": "unknown",
+    "filename": "oisc-subrv-and-nested-15.cnf.xz",
+    "family": "risc-instruction-removal-subrv",
+    "url": "https://benchmark-database.de/file/053e06424279f5cfec8bb14dfa9af23c?context=cnf"
+  },
+  {
+    "index": 19,
+    "hash": "4c037368864330bff3940837ac28ac14",
+    "expected": "sat",
+    "filename": "lockchart-group2-rnd0.3-L18-K36-P8D4J1.cnf.xz",
+    "family": "mechanical-master-key",
+    "url": "https://benchmark-database.de/file/4c037368864330bff3940837ac28ac14?context=cnf"
+  },
+  {
+    "index": 20,
+    "hash": "753ca299a6ab46e28ece1aefa38f4947",
+    "expected": "unsat",
+    "filename": "oski15a01b01s_opt.cnf.xz",
+    "family": "equivalence-checking",
+    "url": "https://benchmark-database.de/file/753ca299a6ab46e28ece1aefa38f4947?context=cnf"
+  },
+  {
+    "index": 21,
+    "hash": "e7addace716ccd5c16ff9a5650869465",
+    "expected": "sat",
+    "filename": "mp1-klieber2017s-0300-032-t12.cnf.xz",
+    "family": "crafted-cec",
+    "url": "https://benchmark-database.de/file/e7addace716ccd5c16ff9a5650869465?context=cnf"
+  },
+  {
+    "index": 22,
+    "hash": "f1973c0a4e960a914ff12aa7e4e9293c",
+    "expected": "sat",
+    "filename": "lockchart-group2-rnd0.3-L19-K38-P8D4J1_4.cnf.xz",
+    "family": "mechanical-master-key",
+    "url": "https://benchmark-database.de/file/f1973c0a4e960a914ff12aa7e4e9293c?context=cnf"
+  },
+  {
+    "index": 23,
+    "hash": "0ed8c06438673f179985a79b9d6a9fe4",
+    "expected": "unsat",
+    "filename": "cfi-rigid-s2-0064-04-or_2_shuffle_all.cnf.xz",
+    "family": "graph-isomorphism",
+    "url": "https://benchmark-database.de/file/0ed8c06438673f179985a79b9d6a9fe4?context=cnf"
+  },
+  {
+    "index": 24,
+    "hash": "24075575c3dbd9e9eae948dd2241b029",
+    "expected": "unsat",
+    "filename": "UR-15-10p0.cnf.xz",
+    "family": "diagnosis",
+    "url": "https://benchmark-database.de/file/24075575c3dbd9e9eae948dd2241b029?context=cnf"
+  },
+  {
+    "index": 25,
+    "hash": "0a8a4c28d27228e954354ea0a6e7f16c",
+    "expected": "sat",
+    "filename": "sum_of_three_cubes_42_known_representation.cnf.xz",
+    "family": "sat-x",
+    "url": "https://benchmark-database.de/file/0a8a4c28d27228e954354ea0a6e7f16c?context=cnf"
+  },
+  {
+    "index": 26,
+    "hash": "110f8eb8b9b80204fe955ea0973bbb00",
+    "expected": "unknown",
+    "filename": "clqcl_30_7_6.normalised.cnf.xz",
+    "family": "clique-coloring",
+    "url": "https://benchmark-database.de/file/110f8eb8b9b80204fe955ea0973bbb00?context=cnf"
+  },
+  {
+    "index": 27,
+    "hash": "c8cde50f32ca3f78a4c74a173c63449b",
+    "expected": "sat",
+    "filename": "bp5_CSO.normalised.cnf.xz",
+    "family": "belpyramid-puzzle",
+    "url": "https://benchmark-database.de/file/c8cde50f32ca3f78a4c74a173c63449b?context=cnf"
+  },
+  {
+    "index": 28,
+    "hash": "032941f5f28c9ac53fa1c80d35f3206f",
+    "expected": "sat",
+    "filename": "GP_216_290_40.cnf.xz",
+    "family": "graceful-production",
+    "url": "https://benchmark-database.de/file/032941f5f28c9ac53fa1c80d35f3206f?context=cnf"
+  },
+  {
+    "index": 29,
+    "hash": "3746303c659ef65aaa78f3b52cd5de49",
+    "expected": "sat",
+    "filename": "6s299b685_Iter30.cnf.xz",
+    "family": "hardware-model-checking",
+    "url": "https://benchmark-database.de/file/3746303c659ef65aaa78f3b52cd5de49?context=cnf"
+  },
+  {
+    "index": 30,
+    "hash": "1e87463fee15de63143796fd92d88a58",
+    "expected": "sat",
+    "filename": "crusti_g2io_175_0.2_511_32.normalised.cnf.xz",
+    "family": "argumentation",
+    "url": "https://benchmark-database.de/file/1e87463fee15de63143796fd92d88a58?context=cnf"
+  },
+  {
+    "index": 31,
+    "hash": "7bdf3e5401cc263951003b569bcd689c",
+    "expected": "unsat",
+    "filename": "bv_ILA_Piccolo_BEQ_sanity_transition.cnf.xz",
+    "family": "hardware-model-checking",
+    "url": "https://benchmark-database.de/file/7bdf3e5401cc263951003b569bcd689c?context=cnf"
+  },
+  {
+    "index": 32,
+    "hash": "76bef98aafe7e718e98761f058c7dc1d",
+    "expected": "unsat",
+    "filename": "bp4_CB_CSO_LP_FPBEQ_FPBLE.normalised.cnf.xz",
+    "family": "belpyramid-puzzle",
+    "url": "https://benchmark-database.de/file/76bef98aafe7e718e98761f058c7dc1d?context=cnf"
+  },
+  {
+    "index": 33,
+    "hash": "2241a1fb5bdbac0c1a3c1980ed8b332d",
+    "expected": "sat",
+    "filename": "crusti_g2io_225_0.1_31_25.normalised.cnf.xz",
+    "family": "argumentation",
+    "url": "https://benchmark-database.de/file/2241a1fb5bdbac0c1a3c1980ed8b332d?context=cnf"
+  },
+  {
+    "index": 34,
+    "hash": "09cd83e233380d0ba1fc56cee88367b1",
+    "expected": "unsat",
+    "filename": "s38417.cnf.xz",
+    "family": "belpyramid-puzzle",
+    "url": "https://benchmark-database.de/file/09cd83e233380d0ba1fc56cee88367b1?context=cnf"
+  },
+  {
+    "index": 35,
+    "hash": "bea83d274b1c57b2171b380e34fd645d",
+    "expected": "unknown",
+    "filename": "xor_op_n36_d3.cnf.xz",
+    "family": "xor_op",
+    "url": "https://benchmark-database.de/file/bea83d274b1c57b2171b380e34fd645d?context=cnf"
+  },
+  {
+    "index": 36,
+    "hash": "526caead2f3c84c2918a2fc775dc3e97",
+    "expected": "unknown",
+    "filename": "ramsey_3_7_23.normalised.cnf.xz",
+    "family": "ramsey-numbers",
+    "url": "https://benchmark-database.de/file/526caead2f3c84c2918a2fc775dc3e97?context=cnf"
+  },
+  {
+    "index": 37,
+    "hash": "c05d4d3ecd06a2e3942fea09159dd27b",
+    "expected": "unknown",
+    "filename": "MVRoundRobin_n16_d10_v2.cnf.xz",
+    "family": "scheduling",
+    "url": "https://benchmark-database.de/file/c05d4d3ecd06a2e3942fea09159dd27b?context=cnf"
+  },
+  {
+    "index": 38,
+    "hash": "1b8806812861df2b7e91dc316ad1ef80",
+    "expected": "sat",
+    "filename": "oddball_52_5_tto_zp.normalised.cnf.xz",
+    "family": "oddball-weighing",
+    "url": "https://benchmark-database.de/file/1b8806812861df2b7e91dc316ad1ef80?context=cnf"
+  },
+  {
+    "index": 39,
+    "hash": "ad69e0a0880cd377e26260f7e4bc6d51",
+    "expected": "unsat",
+    "filename": "g2-T49.2.0.cnf.xz",
+    "family": "cril-misc",
+    "url": "https://benchmark-database.de/file/ad69e0a0880cd377e26260f7e4bc6d51?context=cnf"
+  },
+  {
+    "index": 40,
+    "hash": "1d18837c0ced5c18a3a4693993e61728",
+    "expected": "sat",
+    "filename": "SC25_Timetable_C_392_E_45_Cl_25_D_7_T_50.normalised.cnf.xz",
+    "family": "school-timetabling",
+    "url": "https://benchmark-database.de/file/1d18837c0ced5c18a3a4693993e61728?context=cnf"
+  },
+  {
+    "index": 41,
+    "hash": "43687a48fb119ca61b47c2fc69a71e7d",
+    "expected": "unsat",
+    "filename": "manthey_single-ordered-initialized-w42-b8.cnf.xz",
+    "family": "gray_codes",
+    "url": "https://benchmark-database.de/file/43687a48fb119ca61b47c2fc69a71e7d?context=cnf"
+  },
+  {
+    "index": 42,
+    "hash": "69ed23c545d2a48f735f2187d919a5dd",
+    "expected": "sat",
+    "filename": "crusti_g2io_250_0.2_255_31.normalised.cnf.xz",
+    "family": "argumentation",
+    "url": "https://benchmark-database.de/file/69ed23c545d2a48f735f2187d919a5dd?context=cnf"
+  },
+  {
+    "index": 43,
+    "hash": "f1cd694d42891a20c96a65ee1c321edc",
+    "expected": "unsat",
+    "filename": "oddball_24_4_ttf.normalised.cnf.xz",
+    "family": "oddball-weighing",
+    "url": "https://benchmark-database.de/file/f1cd694d42891a20c96a65ee1c321edc?context=cnf"
+  },
+  {
+    "index": 44,
+    "hash": "321732c1a401ff109b2f2b447e3dbe5e",
+    "expected": "unsat",
+    "filename": "16_16_booth_wallace_mapped_and_default_origin_bit28.cnf.xz",
+    "family": "multiplier-equivalence-checking",
+    "url": "https://benchmark-database.de/file/321732c1a401ff109b2f2b447e3dbe5e?context=cnf"
+  },
+  {
+    "index": 45,
+    "hash": "45742d067cc851edc1201d8a02586eac",
+    "expected": "unsat",
+    "filename": "mchess_20.cnf.xz",
+    "family": "mutilated-chessboard",
+    "url": "https://benchmark-database.de/file/45742d067cc851edc1201d8a02586eac?context=cnf"
+  },
+  {
+    "index": 46,
+    "hash": "663bb5659e42c2c75f74354f48895302",
+    "expected": "unsat",
+    "filename": "SCPC-500-13.cnf.xz",
+    "family": "set-covering",
+    "url": "https://benchmark-database.de/file/663bb5659e42c2c75f74354f48895302?context=cnf"
+  },
+  {
+    "index": 47,
+    "hash": "0d8779c22e2caa8d676723701e5a0347",
+    "expected": "unknown",
+    "filename": "pj2016_k100.cnf.xz",
+    "family": "hardware-model-checking",
+    "url": "https://benchmark-database.de/file/0d8779c22e2caa8d676723701e5a0347?context=cnf"
+  },
+  {
+    "index": 48,
+    "hash": "a497d784c61c330f012dcd80d44dcd43",
+    "expected": "sat",
+    "filename": "x9-06099.sat.sanitized.cnf.xz",
+    "family": "hamiltonian",
+    "url": "https://benchmark-database.de/file/a497d784c61c330f012dcd80d44dcd43?context=cnf"
+  },
+  {
+    "index": 49,
+    "hash": "98a991c902324b02349e766ad357cdc6",
+    "expected": "unsat",
+    "filename": "16_16_booth_dadda_origin_and_and_dadda_mapped_bit28.cnf.xz",
+    "family": "multiplier-equivalence-checking",
+    "url": "https://benchmark-database.de/file/98a991c902324b02349e766ad357cdc6?context=cnf"
+  }
+]
