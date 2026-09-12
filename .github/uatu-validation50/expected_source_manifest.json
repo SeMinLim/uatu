@@ -1,0 +1,12 @@
+{
+  "Makefile": "2a0182c2a75dd1624994533397196d31f36b9f92ae1292750b21fa8b7b5ed219",
+  "main.cpp": "bc5aebddafd95695c86994cb5b9eec97e79567e960dffa0a36eb1670d3ceb6af",
+  "preprocess.cpp": "239d90bdb55f80a3300219717cb47172d6170079665489753644504d4cc56730",
+  "solver.cpp": "9a6f7c353db9ad0e1140d91bad46228baee2fa3dd346fd8e2d9be23fa04daad0",
+  "solver.h": "7aebdf163915c034f038bb7512491cc2965ecc929e52f5cddd1b6bee035841a9",
+  "tests/minimization.cpp": "dec8a55f95e782ad6cb66040ec6ae5141f381cbb1f61c0797416d7a585b954cb",
+  "tests/preprocess_semantics.cpp": "2c5d8b3e10154e0a9d042c6d448f195179d18b4729ba0ca23c0dc80e6fa98ce9",
+  "tests/search_control.cpp": "66c6091e8cb958f850c17cacee89275df04ffb80faf4e64a74d85cf8299713dc",
+  "tests/vivification.cpp": "3ec5c45927060e5ea450dfd1026682a71a5f526435076771acb96cc06b3beb8d",
+  "vivify.cpp": "05c66e2760b455d743d51372a57aab5b8f361869bedc7c76a35fefb1f965157f"
+}

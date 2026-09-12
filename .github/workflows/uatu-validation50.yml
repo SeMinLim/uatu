@@ -1,0 +1,71 @@
+name: Uatu ver5 stage 4 SAT2025 validation 50
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/uatu-validation50/**'
+      - '.github/workflows/uatu-validation50.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pairs:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 50
+      matrix:
+        index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: niklasso/minisat
+          ref: eb01ad68b75bb3b34ff8657c37ad6a31faae0fc3
+          path: minisat-source
+      - name: Build both release solvers
+        run: |
+          make -C .github/uatu-validation50/candidate release
+          make -C minisat-source/simp MROOT="$GITHUB_WORKSPACE/minisat-source" 'CXX=g++ -std=gnu++98 -fpermissive' r
+      - name: Validate the sampled instance
+        run: python3 .github/uatu-validation50/run_pair.py --index ${{ matrix.index }} --solver-dir .github/uatu-validation50/candidate
+      - name: Preserve measurements and answer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pair-${{ matrix.index }}
+          path: |
+            benchmark-output/*.json
+            benchmark-output/*.log
+            benchmark-output/*.model
+          compression-level: 9
+          retention-days: 30
+
+  collect:
+    if: always()
+    needs: pairs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pair-*
+          path: benchmark-artifacts
+      - name: Require 50 complete validation records
+        run: |
+          python3 .github/uatu-validation50/collect_results.py \
+            --artifacts benchmark-artifacts \
+            --output benchmark-summary/sat2025_stage4_validation_50.json \
+            --solver-dir .github/uatu-validation50/candidate
+      - name: Preserve complete validation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sat2025-ver5-stage4-validation-50-summary
+          path: benchmark-summary/sat2025_stage4_validation_50.json
+          retention-days: 30
