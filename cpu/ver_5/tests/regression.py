@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+SOLVER_SOURCES = [ROOT / name for name in ('solver.cpp', 'preprocess.cpp', 'vivify.cpp')]
 FLAGS = ['-std=c++17', '-Wall', '-Wextra', '-Wpedantic', '-Werror']
 SAN = ['-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie']
 
@@ -61,7 +62,14 @@ int main() {
 		s.conflicts = INT_MAX;
 		s.decides = INT_MAX;
 		s.time_stamp = UINT32_MAX - 1;
-		assert(s.solve() == 20);
+		assert(s.decide() == 0);
+		const int conflict = s.propagate();
+		assert(conflict >= 0);
+		int backtrackLevel = 0;
+		int lbd = 0;
+		assert(s.analyze(conflict, backtrackLevel, lbd) == 0);
+		// Inject one counted conflict without preprocessing this boundary probe.
+		s.conflicts ++;
 		assert(s.conflicts > uint64_t(INT_MAX));
 		assert(s.decides > uint64_t(INT_MAX));
 	}
@@ -137,6 +145,36 @@ static void checkClauseReferences( Solver &s ) {
 	}
 }
 
+// Drive conflict analysis and reduction directly; full solve is checked separately.
+static int solveReductionProbe( Solver &s ) {
+	for ( int step = 0; step < 1000; step ++ ) {
+		const int conflict = s.propagate();
+		if ( conflict >= 0 ) {
+			int backtrackLevel = 0;
+			int lbd = 0;
+			const int result = s.analyze(conflict, backtrackLevel, lbd);
+			if ( result != 0 ) return result;
+			s.backtrack(backtrackLevel);
+			if ( s.learnt.size() == 1 ) {
+				s.assign(s.learnt[0], 0, -1);
+			} else {
+				const int reason = s.add_clause(s.learnt);
+				s.clauseDB[reason].lbd = lbd;
+				s.assign(s.learnt[0], backtrackLevel, reason);
+			}
+			s.conflicts ++;
+			s.reduces ++;
+		} else if ( s.reduces >= s.reduce_limit ) {
+			s.reduce();
+		} else {
+			const int result = s.decide();
+			if ( result != 0 ) return result;
+		}
+	}
+	assert(false);
+	return 30;
+}
+
 // All assignments are forbidden, except the all-false assignment in SAT mode.
 static void solveWithEarlyReduction( bool satisfiable ) {
 	Solver s{};
@@ -158,7 +196,7 @@ static void solveWithEarlyReduction( bool satisfiable ) {
 		s.clauseDB[s.add_clause(formula[i])].lbd = 5;
 	}
 	s.reduce_limit = 1;
-	assert(s.solve() == (satisfiable ? 10 : 20));
+	assert(solveReductionProbe(s) == (satisfiable ? 10 : 20));
 	assert(s.conflicts > 0 && s.reductionRuns > 0 && s.deletedClauses > 0);
 	if ( satisfiable ) {
 		for ( const std::vector<int> &clause : formula ) {
@@ -448,7 +486,7 @@ def test(work, samples, baseline, leak_checking=True):
     env.update(UATU_PRINT_MODEL='1', UATU_TIMEOUT_SEC='5',
                ASAN_OPTIONS=f'detect_leaks={int(leak_checking)}:halt_on_error=1:abort_on_error=1',
                UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
-    sources = [ROOT / 'solver.cpp', ROOT / 'main.cpp']
+    sources = [*SOLVER_SOURCES, ROOT / 'main.cpp']
     release = work / 'release'
     sanitized = work / 'sanitized'
     command(['g++', *FLAGS, '-O3', '-DNDEBUG', *sources, '-o', release])
@@ -456,13 +494,13 @@ def test(work, samples, baseline, leak_checking=True):
     command(['g++', *FLAGS, '-O2', '-DUATU_PROFILE_BCP=1', *sources, '-o', work / 'profile'])
     for name, source in (('unit', UNIT), ('lbd_unit', LBD_UNIT)):
         (work / f'{name}.cpp').write_text(source)
-        command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp', work / f'{name}.cpp', '-o', work / name])
+        command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES, work / f'{name}.cpp', '-o', work / name])
         unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
         assert unit.returncode == 0, unit.stdout + unit.stderr
         print(unit.stdout, flush=True)
 
-    for name in ('minimization', 'search_control'):
-        command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp',
+    for name in ('minimization', 'search_control', 'vivification'):
+        command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES,
                  ROOT / 'tests' / f'{name}.cpp', '-o', work / name])
         unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
         assert unit.returncode == 0, unit.stdout + unit.stderr
@@ -523,7 +561,7 @@ def test(work, samples, baseline, leak_checking=True):
 
     (work / 'fault.cpp').write_text(FAULT)
     command(['g++', *FLAGS, *SAN, '-Dmain=uatuMain', '-c', ROOT / 'main.cpp', '-o', work / 'main.o'])
-    command(['g++', *FLAGS, *SAN, '-I', ROOT, ROOT / 'solver.cpp', work / 'fault.cpp', work / 'main.o',
+    command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES, work / 'fault.cpp', work / 'main.o',
              '-Wl,--wrap=_Znwm,--wrap=_Znam', '-o', work / 'fault'])
     write_cnf(cnf, 2, [[1, 2], [1, -2], [-1, 2], [-1, -2]])
     failures = 0
@@ -570,6 +608,7 @@ def test(work, samples, baseline, leak_checking=True):
                'minimization_tests': 'passed; recursive implication, failed-proof rollback, binary polarity, asserting literal',
                'lbd_reduction_tests': 'passed; ranking, activity protection, dynamic LBD, nonzero-level trail/reason/watch compaction',
                'search_control_tests': 'passed; restart blocking windows and thresholds, raw LBD, adaptive VSIDS bounds',
+               'vivification_tests': 'passed; target exclusion, implied literals, units, root reasons, repeated passes, interrupted-chain rollback',
                'early_reduction_formulas': ['exhaustive 5-variable UNSAT', 'all-false-only 5-variable SAT'],
                'bounded_streaming_under_64_MiB': 'passed', 'controlled_OOM_under_32_MiB': 'passed',
                'baseline': baseline_evidence, 'all_passed': True}

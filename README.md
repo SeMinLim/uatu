@@ -20,12 +20,13 @@ A compact CDCL SAT solver built with a small set of effective heuristics.
 | `cpu/ver_1` | Original compact CDCL solver and reference implementation |
 | `cpu/ver_2` | Improved solver preserving the original search policy, with lower profiling overhead, one-step learned-clause minimization, and deterministic clause reduction |
 | `cpu/ver_3` | Usage-aware learned-clause retention with activity and dynamic LBD updates |
-| `cpu/ver_4` | Corrected Ver. 3 with root-level restarts and rephasing; replaces the previous preprocessing/vivification/LRB-EVSIDS version |
+| `cpu/ver_4` | Corrected Ver. 3 with root-level restarts and rephasing |
+| `cpu/ver_5` | Ver. 4 with recursive/binary minimization, LBD management, restart blocking, adaptive VSIDS, bounded preprocessing, and selective vivification |
 
 ## Build and Run
 
 ```bash
-cd cpu/ver_1   # or cpu/ver_2, cpu/ver_3, or cpu/ver_4
+cd cpu/ver_5   # or an earlier version
 make
 ./obj/uatu_solver <instance.cnf>
 ```
@@ -64,10 +65,16 @@ Use `bash download.sh download` and `bash download.sh extract` to perform the tw
 
 SAT Competition 2024 is used for heuristic development and parameter tuning. SAT Competition 2025 is reserved as a frozen final-evaluation set to avoid benchmark overfitting.
 
-<!-- BEGIN SAT2025 VER5 MINISAT 100 -->
-## MiniSAT Comparison (SAT Competition 2025)
+## Ver. 5 Validation (Stages 1–4)
 
-On these 100 sampled instances, **Uatu Ver. 5 did not outperform MiniSAT**. The mean PAR-2 ratio (MiniSAT / Uatu) was **0.9523×**.
+50 random SAT Competition 2025 instances, 1000-second limit: **10 SAT, 8 UNSAT, 32 timeout, 0 memory limit**. Detected wrong answers and execution errors: **0**.
+
+[Features, validation details, and regression results](cpu/ver_5/README.md)
+
+<!-- BEGIN SAT2025 VER5 MINISAT 100 -->
+## Earlier Ver. 5 Comparison (Stages 1–3)
+
+The earlier three-stage Ver. 5 ([`68844e5`](https://github.com/SeMinLim/uatu/commit/68844e51f0d1f3b1ba5d812e78f18e7e0053ad73)) **did not outperform MiniSAT** on these 100 instances. The mean PAR-2 ratio (MiniSAT / Uatu) was **0.9523×**.
 
 | Solver | Solved / 100 | Mean PAR-2 (s) |
 |---|---:|---:|
@@ -78,7 +85,8 @@ On these 100 sampled instances, **Uatu Ver. 5 did not outperform MiniSAT**. The 
 
 Mean PAR-2 averages validated solve wall times and a 2000-second penalty per timeout or memory limit. **Lower is better.**
 
-[Per-instance results and scores](cpu/ver_5/benchmark_results/sat2025_stage3_vs_minisat_100.json) · [Hardware and measurement details](cpu/ver_5/README.md#minisat-comparison-sat-competition-2025)
+[Per-instance results and scores](cpu/ver_5/benchmark_results/sat2025_stage3_vs_minisat_100.json) · [Measurement details at the evaluated revision](https://github.com/SeMinLim/uatu/blob/b66cd539c3101f1ef87ec13d88fffbc121aa5116/cpu/ver_5/README.md#minisat-comparison-sat-competition-2025)
+These measurements apply to the earlier source above. Current Ver. 5 validation is recorded in [its README](cpu/ver_5/README.md).
 <!-- END SAT2025 VER5 MINISAT 100 -->
 
 ---

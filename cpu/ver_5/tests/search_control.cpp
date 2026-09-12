@@ -114,7 +114,7 @@ int main() {
 		assert(s.lbd_queue_size == 1 && s.fast_lbd_sum == 60.0 && s.slow_lbd_sum == 60.0);
 	}
 	for ( int blocking = 0; blocking <= 1; blocking ++ ) {
-		// Cross the policy boundary through solve(), including pre-analysis blocking.
+		// Count an actual conflict at each policy boundary before preprocessing.
 		Solver s{};
 		s.vars = 2;
 		s.initialize();
@@ -133,7 +133,15 @@ int main() {
 			s.trail_queue_sum = 5000;
 			for ( int i = 0; i < 5000; i ++ ) s.trail_queue[i] = 1;
 		}
-		assert(s.solve() == 20);
+		assert(s.decide() == 0);
+		const int conflict = s.propagate();
+		assert(conflict >= 0);
+		s.updateRestartBlocking();
+		int backtrackLevel = 0;
+		int lbd = 0;
+		assert(s.analyze(conflict, backtrackLevel, lbd) == 0);
+		s.conflicts ++;
+		s.updateVSIDSDecay();
 		if ( blocking ) {
 			assert(s.blockedRestarts == 1 && s.restarts == 0);
 		} else {

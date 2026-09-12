@@ -216,7 +216,7 @@ int Solver::add_clause( std::vector<int> &c ) {
 }
 
 // BCP (Boolean Constraint Propagation)
-int Solver::propagate( void ) {
+int Solver::propagate( uint64_t *workBudget ) {
         ++bcpFunctionCalls;
 #if UATU_PROFILE_BCP
         using BcpClock = std::chrono::steady_clock;
@@ -236,6 +236,18 @@ int Solver::propagate( void ) {
                 int out = 0;
 
                 for ( int i = 0; i < numClauses; ) {
+			if ( workBudget != nullptr ) {
+				if ( *workBudget == 0 ) {
+					while ( i < numClauses ) ws[out ++] = ws[i ++];
+					ws.resize(out);
+					propagated --;
+#if UATU_PROFILE_BCP
+					finishBcpTiming();
+#endif
+					return -2;
+				}
+				(*workBudget) --;
+			}
                         const int blocker = ws[i].blocker;
                         if ( Value(blocker) == 1 ) {
                                 ws[out++] = ws[i++];
@@ -260,7 +272,25 @@ int Solver::propagate( void ) {
 
                         int k = 2;
                         const int size = static_cast<int>(c.literals.size());
-                        while ( k < size && Value(c[k]) == -1 ) ++k;
+			if ( workBudget == nullptr ) {
+				while ( k < size && Value(c[k]) == -1 ) k ++;
+			} else {
+				while ( k < size ) {
+					if ( *workBudget == 0 ) {
+						ws[out ++] = watcher;
+						while ( i < numClauses ) ws[out ++] = ws[i ++];
+						ws.resize(out);
+						propagated --;
+#if UATU_PROFILE_BCP
+						finishBcpTiming();
+#endif
+						return -2;
+					}
+					(*workBudget) --;
+					if ( Value(c[k]) != -1 ) break;
+					k ++;
+				}
+			}
 
                         if ( k < size ) {
                                 c[1] = c[k];
@@ -388,7 +418,8 @@ int Solver::parseStream( FILE *file ) {
 int Solver::decide( void ) {
 	// Pop VSIDS max-heap until finding an undefined literal
     	int next = -1;
-	while ( next == -1 || Value(next) != 0 ) {
+	while ( next == -1 || Value(next) != 0 ||
+	        (!eliminated.empty() && eliminated[next]) ) {
         	if ( vsids.empty() ) return 10;
         	else next = vsids.pop();
     	}
@@ -892,6 +923,8 @@ int Solver::solve() {
         }
 
         unsigned long long loopCounter = 0;
+	uint64_t nextVivification = VIVIFICATION_INTERVAL;
+	result = preprocess();
         auto updateLocalBest = [&]() {
                 if ( static_cast<int>(trail.size()) <= threshold ) return;
                 threshold = static_cast<int>(trail.size());
@@ -905,6 +938,12 @@ int Solver::solve() {
                         result = 30;
                         break;
                 }
+		if ( decVarInTrail.empty() && conflicts >= nextVivification ) {
+			result = vivifyLearnts();
+			nextVivification = conflicts <= UINT64_MAX - VIVIFICATION_INTERVAL
+				? conflicts + VIVIFICATION_INTERVAL : UINT64_MAX;
+			if ( result != 0 ) break;
+		}
 
                 const int conflictClause = propagate();
                 if ( conflictClause != -1 ) {
@@ -943,6 +982,7 @@ int Solver::solve() {
                 }
         }
 
+	if ( result == 10 ) extendModel();
         processTimeFinal = timeCheckerCPU() - processStart;
         printf( "Elapsed Time [Total] (CPU): %.4f\n", processTimeFinal );
 #if UATU_PROFILE_BCP

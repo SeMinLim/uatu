@@ -54,6 +54,17 @@ int main( int argc, char **argv ) {
 	printf( "Minimized Literals   : %" PRIu64 "\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %" PRIu64 "\n", solver.clauseActivityBumps );
 	printf( "Dynamic LBD Updates  : %" PRIu64 "\n", solver.dynamicLBDUpdates );
+	printf( "Preprocessing Time   : %.4f\n", solver.preprocessTimeFinal );
+	printf( "Eliminated Variables : %" PRIu64 "\n", solver.preprocessingEliminated );
+	printf( "Subsumed Clauses     : %" PRIu64 "\n", solver.preprocessingSubsumed );
+	printf( "Strengthened Clauses : %" PRIu64 "\n", solver.preprocessingStrengthened );
+	printf( "BVE Resolvents       : %" PRIu64 "\n", solver.preprocessingResolvents );
+	printf( "Preprocessing Work   : %" PRIu64 "\n", solver.preprocessingWork );
+	printf( "Vivification Runs    : %" PRIu64 "\n", solver.vivificationRuns );
+	printf( "Vivification Probes  : %" PRIu64 "\n", solver.vivificationCandidates );
+	printf( "Vivified Clauses     : %" PRIu64 "\n", solver.vivifiedClauses );
+	printf( "Vivified Literals    : %" PRIu64 "\n", solver.vivifiedLiterals );
+	printf( "Vivification Stops   : %" PRIu64 "\n", solver.vivificationBudgetStops );
 	printf( "Active Clauses       : %zu\n", solver.clauseDB.size() );
 	printf( "----------------------------------------------------\n" );
 	fflush( stdout );

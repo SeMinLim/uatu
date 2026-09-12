@@ -1,0 +1,48 @@
+{
+  "correctness_formulas_per_build": 506,
+  "correctness_builds": [
+    "release",
+    "ASan+UBSan"
+  ],
+  "malformed_inputs_per_build": 19,
+  "allocation_failure_points": 35,
+  "allocation_failure_stages": [
+    "parsing",
+    "solving"
+  ],
+  "leak_checking": false,
+  "counter_boundary_tests": "passed; deliberately injected INT_MAX / UINT32_MAX / UINT64_MAX",
+  "minimization_tests": "passed; recursive implication, failed-proof rollback, binary polarity, asserting literal",
+  "lbd_reduction_tests": "passed; ranking, activity protection, dynamic LBD, nonzero-level trail/reason/watch compaction",
+  "search_control_tests": "passed; restart blocking windows and thresholds, raw LBD, adaptive VSIDS bounds",
+  "early_reduction_formulas": [
+    "exhaustive 5-variable UNSAT",
+    "all-false-only 5-variable SAT"
+  ],
+  "bounded_streaming_under_64_MiB": "passed",
+  "controlled_OOM_under_32_MiB": "passed",
+  "baseline": null,
+  "all_passed": true,
+  "vivification_tests": {
+    "status": "passed",
+    "build": "ASan+UBSan",
+    "targeted_small_cases": 8,
+    "interrupted_chain_variables": 200012,
+    "interrupted_chain_edges": 200009,
+    "full_chain_propagation_after_rollback": "passed"
+  },
+  "source_sha256": {
+    "solver.cpp": "9a6f7c353db9ad0e1140d91bad46228baee2fa3dd346fd8e2d9be23fa04daad0",
+    "solver.h": "7aebdf163915c034f038bb7512491cc2965ecc929e52f5cddd1b6bee035841a9",
+    "preprocess.cpp": "239d90bdb55f80a3300219717cb47172d6170079665489753644504d4cc56730",
+    "vivify.cpp": "05c66e2760b455d743d51372a57aab5b8f361869bedc7c76a35fefb1f965157f",
+    "main.cpp": "bc5aebddafd95695c86994cb5b9eec97e79567e960dffa0a36eb1670d3ceb6af"
+  },
+  "tests_sha256": {
+    "regression.py": "8d6c1b3a9566f57a731eaf335a5ebddce4e07da9c56dd0f8ad3845488466ac20",
+    "search_control.cpp": "66c6091e8cb958f850c17cacee89275df04ffb80faf4e64a74d85cf8299713dc",
+    "minimization.cpp": "dec8a55f95e782ad6cb66040ec6ae5141f381cbb1f61c0797416d7a585b954cb",
+    "vivification.cpp": "3ec5c45927060e5ea450dfd1026682a71a5f526435076771acb96cc06b3beb8d"
+  },
+  "leak_checking_limitation": "LeakSanitizer cannot inspect /proc task under this runner; ASan and UBSan remain enabled."
+}

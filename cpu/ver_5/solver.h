@@ -16,6 +16,14 @@ static constexpr uint64_t RESTART_BLOCKING_START = 10000;
 static constexpr double RESTART_BLOCKING_FACTOR = 1.4;
 static constexpr uint64_t VSIDS_DECAY_INTERVAL = 5000;
 static constexpr double VSIDS_DECAY_MAX = 0.95;
+static constexpr uint64_t VIVIFICATION_INTERVAL = 8192;
+
+struct EliminationRecord {
+	int variable;
+	int defaultValue;
+	size_t offset;
+	size_t end;
+};
 
 
 #define ChildLeft(x) (x << 1 | 1)
@@ -161,6 +169,15 @@ public:
 	uint64_t reductionRuns = 0;
 	uint64_t deletedClauses = 0, minimizedLiterals = 0;
 	uint64_t clauseActivityBumps = 0, dynamicLBDUpdates = 0;
+	std::vector<uint8_t> eliminated;
+	std::vector<EliminationRecord> eliminationRecords;
+	std::vector<int> eliminationLiterals;
+	uint64_t preprocessingEliminated = 0, preprocessingSubsumed = 0;
+	uint64_t preprocessingStrengthened = 0, preprocessingResolvents = 0;
+	uint64_t preprocessingWork = 0;
+	double preprocessTimeFinal = 0.0;
+	uint64_t vivificationRuns = 0, vivificationCandidates = 0;
+	uint64_t vivifiedClauses = 0, vivifiedLiterals = 0, vivificationBudgetStops = 0;
     	int threshold;                                  // A threshold for updating the local_best phase
     	int propagated;                                 // The number of propagated literals in trail
     	uint32_t time_stamp;                            // Parameter for conflict analysis and LBD calculation
@@ -195,7 +212,10 @@ public:
 	void initialize();                                        // Allocate memory and initialize the values
     	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
 	int  add_clause( std::vector<int> &c );                   // Add new clause to clause database
-	int  propagate();                                         // BCP (Boolean Constraint Propagation)
+	int  propagate( uint64_t *workBudget = nullptr );          // -2 means an interrupted probe
+	int  preprocess();                                        // Root simplification and bounded elimination
+	void extendModel();                                       // Restore eliminated variables in reverse order
+	int  vivifyLearnts();                                     // Budgeted probes at the root
     	int  parse( char *filename );                             // Read CNF file
 	int  decide();                                            // Pick decision variable based on VSIDS
 	void update_score( int var, double coeff );               // Update variable activity
