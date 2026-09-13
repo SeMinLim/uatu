@@ -31,6 +31,15 @@ python3 tests/regression.py --reference /path/to/glucose --build-dir /tmp/uatu-v
 
 **SAT Competition 2025 validation:** 50/400 Main Track instances, sampled uniformly without replacement (seed `12803139359653862237`), source [`362ceb9`](https://github.com/SeMinLim/uatu/commit/362ceb9ed729c220c7233bd595528248aaddf90a). **1,000 seconds wall clock, 12 GiB, one thread:** **10 SAT, 8 UNSAT, 32 timeout; detected wrong answers or execution errors: 0**. SAT models passed original-CNF checks; 7 UNSAT answers matched GBD and 1 matched Glucose 4.2.1, without proof-certificate checking. Timeouts remain unresolved. [Evidence](tests/sat2025_validation_50.json) · [Run](https://github.com/SeMinLim/uatu/actions/runs/34751942376).
 
+**MiniSAT comparison (SAT Competition 2025):** Ver. 5 **outperformed MiniSAT** on this sample. Mean PAR-2 ratio (MiniSAT / Ver. 5): **1.0560×**.
+
+| Solver | Solved / 100 | Mean PAR-2 (s) |
+|---|---:|---:|
+| Uatu Ver. 5 | 32 | 1435.112 |
+| MiniSAT 2.2.0 simp | 27 | 1515.483 |
+
+100/400 Main Track instances, sampled uniformly without replacement (seed `2974165144`). **1,000 seconds wall clock, 12 GiB, one thread**, release builds with default preprocessing. Each pair ran sequentially on the same runner and pinned CPU core, with alternating order. Timing includes parsing, preprocessing, search and model output. Mean PAR-2 uses solved wall time or a **2,000-second penalty** for timeout/memory limit, divided by 100; lower is better. SAT models passed original-CNF checks; all UNSAT answers matched published GBD statuses, without proof-certificate checking. Detected wrong answers, invalid models and execution errors: **0**. [Source](https://github.com/SeMinLim/uatu/commit/11d2add23b8a2b722ad38e150478f029d8c9e6b4) · [Evidence](tests/sat2025_vs_minisat_100.json) · [Run](https://github.com/SeMinLim/uatu/actions/runs/34763218971).
+
 Matching heuristic policies does not establish equal runtime. Glucose performance parity has not been measured for this replacement. Earlier SAT Competition scores apply to [the previous revision](https://github.com/SeMinLim/uatu/blob/66cf8f1a731c3189969ae4510d833b8b06fb73ea/cpu/ver_5/README.md).
 
 Reference copyrights and license notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
