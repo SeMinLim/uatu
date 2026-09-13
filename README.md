@@ -71,6 +71,19 @@ SAT Competition 2024 is used for heuristic development and parameter tuning. SAT
 
 [Features, validation details, and regression results](cpu/ver_5/README.md)
 
+## Ver. 5 Comparison (Stages 1–4)
+
+The current four-stage Ver. 5 **did not outperform MiniSAT** on this 100-instance sample. The mean PAR-2 ratio (MiniSAT / Uatu) was **0.9644×**.
+
+| Solver | Solved / 100 | Mean PAR-2 (s) |
+|---|---:|---:|
+| Uatu Ver. 5 | 38 | 1311.523 |
+| MiniSAT 2.2.0 | 40 | 1264.827 |
+
+100 random SAT Competition 2025 Main Track instances, seed `20260913`; **1000 seconds wall clock**, **12 GiB**, one thread. Mean PAR-2 uses solve time or a 2000-second penalty for an unresolved instance.
+
+[Method and results](cpu/ver_5/README.md#minisat-comparison-sat-competition-2025) · [Per-instance evidence](cpu/ver_5/benchmark_results/sat2025_stage4_vs_minisat_100.json)
+
 <!-- BEGIN SAT2025 VER5 MINISAT 100 -->
 ## Earlier Ver. 5 Comparison (Stages 1–3)
 

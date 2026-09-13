@@ -44,6 +44,27 @@ Release and ASan/UBSan checks passed on 899 stage-4 formulas and the existing 50
 
 [Stage-4 regressions](benchmark_results/stage4_regression.json) · [Core regressions](benchmark_results/stage4_core_regression.json)
 
+## MiniSAT Comparison (SAT Competition 2025)
+
+The current four-stage Ver. 5 **did not outperform MiniSAT** on this 100-instance sample. The mean PAR-2 ratio (MiniSAT / Uatu) was **0.9644×**.
+
+| Solver | Solved / 100 | Mean PAR-2 (s) |
+|---|---:|---:|
+| Uatu Ver. 5 | 38 | 1311.523 |
+| MiniSAT 2.2.0 | 40 | 1264.827 |
+
+Uatu had 61 timeouts and 1 memory limit; MiniSAT had 59 timeouts and 1 memory limit.
+
+100 of 400 Main Track instances were sampled uniformly without replacement, seed `20260913`. Uatu source: [`a4dc75b`](https://github.com/SeMinLim/uatu/commit/a4dc75bc104c84762193446fc2ae15c58fb97908), stages 1–4. MiniSAT: `2.2.0 simp`, commit `eb01ad68b75bb3b34ff8657c37ad6a31faae0fc3`, default preprocessing.
+
+Limits were **1000 seconds wall clock** and **12 GiB virtual address space** per solver, one thread. Each pair ran sequentially on the same GitHub-hosted Ubuntu 22.04 runner and pinned CPU core, with alternating solver order. Both used release builds (`-O3 -DNDEBUG`). CPU models, compiler versions, commands, and source hashes are recorded per instance.
+
+Timing includes process launch, parsing, preprocessing, search, and model output. Download, decompression, cache warming, and model checking are excluded. Mean PAR-2 is the sum of validated solve wall times and a **2000-second penalty** per timeout or memory limit, divided by 100. **Lower is better.** A MiniSAT/Uatu ratio above 1 favors Uatu.
+
+SAT models were checked against every original clause; UNSAT answers were compared with known answers or the other solver, without formal proof checking. All 100 pairs completed with no detected wrong answers, invalid models, or execution errors.
+
+[Per-instance results and scores](benchmark_results/sat2025_stage4_vs_minisat_100.json) · [Measurement run](https://github.com/SeMinLim/uatu/actions/runs/34732981706)
+
 ## Earlier Results
 
 The [100-instance MiniSAT comparison](benchmark_results/sat2025_stage3_vs_minisat_100.json) measured the earlier three-stage implementation, source [`68844e5`](https://github.com/SeMinLim/uatu/commit/68844e51f0d1f3b1ba5d812e78f18e7e0053ad73). It does not measure this replacement.
