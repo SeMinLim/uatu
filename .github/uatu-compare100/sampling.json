@@ -1,0 +1,15 @@
+{
+  "track": "main_2025",
+  "population_count": 400,
+  "sample_count": 100,
+  "seed": 20260913,
+  "method": "Python random.Random(20260913).sample(population sorted by GBD hash, 100)",
+  "filtered_by_size_difficulty_or_result": false,
+  "population_source": "https://benchmark-database.de/getinstances?context=cnf&query=track%3Dmain_2025",
+  "metadata_source": "https://benchmark-database.de/?context=cnf&track=main_2025",
+  "official_download_page": "https://satcompetition.github.io/2025/downloads.html",
+  "population_uri_sha256": "7c444f6dd65920a8381033d1ba8cc781d796c2c12d4ba7f72b098efdf0f1d8fd",
+  "population_sha256": "a32bf2d7119955cc7acb67be8b52439f617178d6000f97e824cd41f9feff3b13",
+  "sample_sha256": "caa29b4826756e399ffed2364af70dadf99bd09bd7fb0f1c0a27fcfe1df997c6",
+  "sample_hashes_sha256": "390f9ca6e92beeb18979953fe17af5b0ac23ebd4180ad9b964731d190698ad19"
+}
