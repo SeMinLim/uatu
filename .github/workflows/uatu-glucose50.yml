@@ -29,7 +29,7 @@ jobs:
       - name: Build frozen solver and reference
         run: |
           make -C cpu/ver_5 release
-          make -C glucose-source/simp -j2
+          make -C glucose-source/simp MROOT="$GITHUB_WORKSPACE/glucose-source" -j2
       - name: Validate the sampled instance
         run: python3 .github/uatu-glucose50/run_validation.py --index ${{ matrix.index }}
       - name: Preserve answer evidence
