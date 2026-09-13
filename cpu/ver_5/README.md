@@ -29,6 +29,8 @@ LeakSanitizer was unavailable under the test runtime's ptrace; leak detection wa
 python3 tests/regression.py --reference /path/to/glucose --build-dir /tmp/uatu-ver5-check
 ```
 
+**SAT Competition 2025 validation:** 50/400 Main Track instances, sampled uniformly without replacement (seed `12803139359653862237`), source [`362ceb9`](https://github.com/SeMinLim/uatu/commit/362ceb9ed729c220c7233bd595528248aaddf90a). **1,000 seconds wall clock, 12 GiB, one thread:** **10 SAT, 8 UNSAT, 32 timeout; detected wrong answers or execution errors: 0**. SAT models passed original-CNF checks; 7 UNSAT answers matched GBD and 1 matched Glucose 4.2.1, without proof-certificate checking. Timeouts remain unresolved. [Evidence](tests/sat2025_validation_50.json) · [Run](https://github.com/SeMinLim/uatu/actions/runs/34751942376).
+
 Matching heuristic policies does not establish equal runtime. Glucose performance parity has not been measured for this replacement. Earlier SAT Competition scores apply to [the previous revision](https://github.com/SeMinLim/uatu/blob/66cf8f1a731c3189969ae4510d833b8b06fb73ea/cpu/ver_5/README.md).
 
 Reference copyrights and license notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
