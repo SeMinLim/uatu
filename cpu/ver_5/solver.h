@@ -6,18 +6,6 @@
 #include <stdbool.h>
 #include <vector>
 
-
-static constexpr size_t BINARY_MINIMIZATION_MAX_SIZE = 30;
-static constexpr int BINARY_MINIMIZATION_MAX_LBD = 6;
-static constexpr int GLUE_LBD = 2;
-static constexpr int LBD_PROTECTION_MAX = 30;
-static constexpr int RESTART_TRAIL_WINDOW = 5000;
-static constexpr uint64_t RESTART_BLOCKING_START = 10000;
-static constexpr double RESTART_BLOCKING_FACTOR = 1.4;
-static constexpr uint64_t VSIDS_DECAY_INTERVAL = 5000;
-static constexpr double VSIDS_DECAY_MAX = 0.95;
-static constexpr uint64_t VIVIFICATION_INTERVAL = 8192;
-
 struct EliminationRecord {
 	int variable;
 	int defaultValue;
@@ -117,17 +105,16 @@ public:
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
-	// A recent LBD improvement protects the clause for one reduction.
-	bool canBeDeleted;
+	bool learntClause, permanent, removable, simplified, removed;
     	// Literals in a clause
 	std::vector<int> literals;
 	// Overloading array operator
 	// Return a certain literal in a clause
     	int& operator [] ( int index ) { return literals[index]; }
 	// Initialize clause metadata and resize literal array
-	Clause( int sz ): lbd(0), activity(0.0), useCount(0), canBeDeleted(true) {
-		literals.resize(sz);
-	}
+	Clause( int sz ): lbd(0), activity(0.0), useCount(0),
+		learntClause(false), permanent(false), removable(true),
+		simplified(false), removed(false) { literals.resize(sz); }
 };
 
 
@@ -163,22 +150,34 @@ public:
 	// Search totals must not overflow after INT_MAX events.
 	uint64_t conflicts = 0, decides = 0, unitPropagations = 0;
 	uint64_t bcpFunctionCalls = 0;
-	uint64_t restarts = 0, rephases = 0, reduces = 0;
-	uint64_t blockedRestarts = 0, varDecayUpdates = 0;
-	uint64_t rephase_inc = 0, rephase_limit = 0, reduce_limit = 0;
-	uint64_t reductionRuns = 0;
-	uint64_t deletedClauses = 0, minimizedLiterals = 0;
-	uint64_t clauseActivityBumps = 0, dynamicLBDUpdates = 0;
+	uint64_t restarts = 0, reduces = 0;
+	uint64_t firstReduceDB = 2000, nbclausesbeforereduce = 2000;
+	uint64_t curRestart = 1, incReduceDB = 300, specialIncReduceDB = 1000;
+	uint64_t conflictsRestarts = 0, noDecisionConflict = 0;
+	uint64_t learntGlue = 0, learntBinary = 0, blockedRestarts = 0;
+	size_t ordinaryLearntCount = 0;
+	bool chanseokStrategy = false, glureduce = true, lubyRestart = false;
+	bool randomizeOnRestarts = false, newDescent = false, adaptStrategies = true;
+	bool performLCM = true, preprocessingDone = false;
+	int coLBDBound = 5;
+	uint32_t randomDescentAssignments = 0;
+	double randomSeed = 91648253;
+	int trail_queue[5000], trail_queue_size = 0, trail_queue_pos = 0;
+	uint64_t trailQueueSum = 0;
+	int simpDBAssigns = -1;
+	int64_t simpDBProps = 0;
+	std::vector<int> analyzeStack, analyzeToClear, lastDecisionLevel;
 	std::vector<uint8_t> eliminated;
 	std::vector<EliminationRecord> eliminationRecords;
 	std::vector<int> eliminationLiterals;
 	uint64_t preprocessingEliminated = 0, preprocessingSubsumed = 0;
 	uint64_t preprocessingStrengthened = 0, preprocessingResolvents = 0;
-	uint64_t preprocessingWork = 0;
+	uint64_t lcmRuns = 0, lcmTested = 0, lcmReduced = 0, lcmLiteralsRemoved = 0;
 	double preprocessTimeFinal = 0.0;
-	uint64_t vivificationRuns = 0, vivificationCandidates = 0;
-	uint64_t vivifiedClauses = 0, vivifiedLiterals = 0, vivificationBudgetStops = 0;
-    	int threshold;                                  // A threshold for updating the local_best phase
+	double cpuDeadline = 0.0;
+	uint64_t reductionRuns = 0;
+	uint64_t deletedClauses = 0, minimizedLiterals = 0;
+	uint64_t clauseActivityBumps = 0, dynamicLBDUpdates = 0;
     	int propagated;                                 // The number of propagated literals in trail
     	uint32_t time_stamp;                            // Parameter for conflict analysis and LBD calculation
 
@@ -186,12 +185,9 @@ public:
             lbd_queue_size,                             // The number of LBDs in this queue
             lbd_queue_pos;                              // The position to save the next LBD
     	double fast_lbd_sum, slow_lbd_sum;              // Sum of the global and recent 50 LBDs
-	int trail_queue[RESTART_TRAIL_WINDOW];            // Conflict-time trail lengths
-	int trail_queue_size = 0, trail_queue_pos = 0;
-	uint64_t trail_queue_sum = 0;
 
 	int8_t *value = nullptr;                         // Current assignments
-	int8_t *local_best = nullptr;                    // Deepest saved trail
+	int8_t *forceUNSAT = nullptr;                    // Conflict-derived phases
 	int8_t *saved = nullptr;                         // Saved phases
 	int *reason = nullptr;                          // Implication clause indices
 	int *level = nullptr;                           // Decision levels
@@ -200,7 +196,8 @@ public:
 	unsigned int lbdStamp;
 
     	double *activity = nullptr;                    // The variables' score for VSIDS
-	double var_inc = 1.0, var_decay = 0.8;            // Parameters for VSIDS
+	double max_var_decay = 0.95;
+	double var_inc, var_decay;                       // Parameter for VSIDS
 	double clause_inc, clause_decay;                 // Parameters for learnt-clause activity
     	Heap vsids;                                    // Heap to select variable
 
@@ -212,34 +209,35 @@ public:
 	void initialize();                                        // Allocate memory and initialize the values
     	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
 	int  add_clause( std::vector<int> &c );                   // Add new clause to clause database
-	int  propagate( uint64_t *workBudget = nullptr );          // -2 means an interrupted probe
-	int  preprocess();                                        // Root simplification and bounded elimination
-	void extendModel();                                       // Restore eliminated variables in reverse order
-	int  vivifyLearnts();                                     // Budgeted probes at the root
+	int  propagate();                                         // BCP (Boolean Constraint Propagation)
     	int  parse( char *filename );                             // Read CNF file
 	int  decide();                                            // Pick decision variable based on VSIDS
 	void update_score( int var, double coeff );               // Update variable activity
 	void bumpClauseActivity( int cref );                       // Update learnt-clause activity
+	int calculateLBD( const std::vector<int> &literals );
 	int  calculateClauseLBD( const Clause &clause );           // Calculate current LBD
 	void updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD
     	int  analyze( int cref, int &backtrack_level, int &lbd ); // Conflict analysis
 	void backtrack( int backtrack_level );                    // Backtracking
-	void updateRestartBlocking();                             // Sample before conflict backtracking
-	void updateVSIDSDecay();                                  // Adjust after each counted conflict
     	void restart();                                         // Root backtrack and recent-LBD reset
-    	void rephase();                                         // Install phase targets after a root backtrack
     	void reduce();                                          // Do reduce
+	bool withinBudget() const;
+	void clearLBDQueue();
+	void pushTrailSize();
+	bool shouldRestart( uint64_t searchConflicts, uint64_t conflictBudget );
+	void adaptSolver();
+	static uint64_t luby( uint64_t index );
+	bool literalRedundant( int literal, uint32_t abstractLevels );
+	void binaryMinimization();
+	void rebuildWatches();
+	void compactClauses();
+	bool simplifyRoot();
+	int preprocess();
+	bool extendModel();
+	int vivifyLearnts();
 	int  solve();                                             // Solver
     	void printModel();                                      // Print model when the result is SAT
 private:
 	int parseStream( FILE *file );
-
-	// Reuse reason-traversal storage across conflicts.
-	std::vector<int> minimizeStack;
-	std::vector<int> minimizeTouched;
-	bool isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
-	                              uint32_t membershipStamp );
-	void minimizeLearntRecursive();
-	void minimizeLearntBinary();
 
 };

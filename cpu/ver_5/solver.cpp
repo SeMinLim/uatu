@@ -81,34 +81,12 @@ static int invalidCNF() {
 	return 30;
 }
 
-// Keep clause identifiers stable while ranking the learnt database.
-struct ClauseRank {
-	int clauseIdx;
-	int lbd;
-	size_t size;
-	double activity;
-};
-
-static bool higherClauseActivity( const ClauseRank &a, const ClauseRank &b ) {
-	if ( a.activity != b.activity ) return a.activity > b.activity;
-	return a.clauseIdx < b.clauseIdx;
-}
-
-static bool worseClauseLBD( const ClauseRank &a, const ClauseRank &b ) {
-	const bool aBinary = a.size == 2;
-	const bool bBinary = b.size == 2;
-	if ( aBinary != bBinary ) return !aBinary;
-	if ( a.lbd != b.lbd ) return a.lbd > b.lbd;
-	if ( a.activity != b.activity ) return a.activity < b.activity;
-	return a.clauseIdx < b.clauseIdx;
-}
-
 //// Solver
 // Release partially initialized arrays as well as successfully parsed formulas.
 Solver::~Solver() {
 	delete[] watched_literals;
 	delete[] value;
-	delete[] local_best;
+	delete[] forceUNSAT;
 	delete[] saved;
 	delete[] reason;
 	delete[] level;
@@ -129,7 +107,7 @@ void Solver::nextAnalysisStamp() {
 // Allocate memory and initialize the values
 void Solver::initialize( void ) {
         value = new int8_t[vars + 1];
-        local_best = new int8_t[vars + 1];
+        forceUNSAT = new int8_t[vars + 1];
         saved = new int8_t[vars + 1];
         reason = new int[vars + 1];
         level = new int[vars + 1];
@@ -142,18 +120,13 @@ void Solver::initialize( void ) {
         trail.reserve(vars);
         decVarInTrail.reserve(vars);
         learnt.reserve(64);
-	minimizeStack.reserve(64);
-	minimizeTouched.reserve(64);
 
         conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
-        restarts = rephases = reduces = 0;
-	blockedRestarts = varDecayUpdates = 0;
-	trail_queue_size = trail_queue_pos = 0;
-	trail_queue_sum = 0;
+        restarts = reduces = 0;
         reductionRuns = 0;
         deletedClauses = minimizedLiterals = 0;
         clauseActivityBumps = dynamicLBDUpdates = 0;
-        threshold = propagated = time_stamp = 0;
+        propagated = time_stamp = 0;
         lbdStamp = 0;
         fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
         processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
@@ -162,22 +135,17 @@ void Solver::initialize( void ) {
         var_decay = 0.8;
         clause_inc = 1.0;
         clause_decay = 0.999;
-        if ( const char *env = getenv("UATU_CLAUSE_DECAY") ) {
-                const double parsed = atof(env);
-                if ( parsed > 0.0 && parsed < 1.0 ) clause_decay = parsed;
-        }
-        rephase_inc = 100000;
-        rephase_limit = 100000;
-        reduce_limit = 8192;
+	eliminated.assign(static_cast<size_t>(vars) + 1, 0);
 
         vsids.initialize(activity, vars);
-        value[0] = local_best[0] = saved[0] = 0;
+        value[0] = forceUNSAT[0] = saved[0] = 0;
         reason[0] = -1;
         level[0] = mark[0] = 0;
         lbdMark[0] = 0;
         activity[0] = 0.0;
         for ( int i = 1; i <= vars; i ++ ) {
-                value[i] = local_best[i] = saved[i] = 0;
+                value[i] = forceUNSAT[i] = 0;
+		saved[i] = -1;
                 reason[i] = -1;
                 level[i] = mark[i] = 0;
                 lbdMark[i] = 0;
@@ -216,7 +184,7 @@ int Solver::add_clause( std::vector<int> &c ) {
 }
 
 // BCP (Boolean Constraint Propagation)
-int Solver::propagate( uint64_t *workBudget ) {
+int Solver::propagate( void ) {
         ++bcpFunctionCalls;
 #if UATU_PROFILE_BCP
         using BcpClock = std::chrono::steady_clock;
@@ -231,23 +199,12 @@ int Solver::propagate( uint64_t *workBudget ) {
 
         while ( propagated < static_cast<int>(trail.size()) ) {
                 const int p = trail[propagated++];
+		if ( simpDBProps > INT64_MIN ) simpDBProps --;
                 std::vector<WL> &ws = WatchedLiterals(p);
                 const int numClauses = static_cast<int>(ws.size());
                 int out = 0;
 
                 for ( int i = 0; i < numClauses; ) {
-			if ( workBudget != nullptr ) {
-				if ( *workBudget == 0 ) {
-					while ( i < numClauses ) ws[out ++] = ws[i ++];
-					ws.resize(out);
-					propagated --;
-#if UATU_PROFILE_BCP
-					finishBcpTiming();
-#endif
-					return -2;
-				}
-				(*workBudget) --;
-			}
                         const int blocker = ws[i].blocker;
                         if ( Value(blocker) == 1 ) {
                                 ws[out++] = ws[i++];
@@ -272,25 +229,7 @@ int Solver::propagate( uint64_t *workBudget ) {
 
                         int k = 2;
                         const int size = static_cast<int>(c.literals.size());
-			if ( workBudget == nullptr ) {
-				while ( k < size && Value(c[k]) == -1 ) k ++;
-			} else {
-				while ( k < size ) {
-					if ( *workBudget == 0 ) {
-						ws[out ++] = watcher;
-						while ( i < numClauses ) ws[out ++] = ws[i ++];
-						ws.resize(out);
-						propagated --;
-#if UATU_PROFILE_BCP
-						finishBcpTiming();
-#endif
-						return -2;
-					}
-					(*workBudget) --;
-					if ( Value(c[k]) != -1 ) break;
-					k ++;
-				}
-			}
+                        while ( k < size && Value(c[k]) == -1 ) ++k;
 
                         if ( k < size ) {
                                 c[1] = c[k];
@@ -392,13 +331,25 @@ int Solver::parseStream( FILE *file ) {
 		} else {
 			if ( parsedClauses >= clauses ) return invalidCNF();
 			parsedClauses ++;
-			if ( buffer.empty() ) {
-				contradictory = true;
-			} else if ( buffer.size() == 1 ) {
-				if ( Value(buffer[0]) == -1 ) contradictory = true;
-				else if ( Value(buffer[0]) == 0 ) assign(buffer[0], 0, -1);
-			} else {
-				add_clause(buffer);
+			std::sort(buffer.begin(), buffer.end());
+			buffer.erase(std::unique(buffer.begin(), buffer.end()), buffer.end());
+			bool satisfied = false;
+			for ( int current : buffer ) {
+				if ( Value(current) == 1 || (current > 0 &&
+				     std::binary_search(buffer.begin(), buffer.end(), -current)) ) {
+					satisfied = true;
+					break;
+				}
+			}
+			if ( !satisfied ) {
+				size_t out = 0;
+				for ( int current : buffer ) {
+					if ( Value(current) != -1 ) buffer[out ++] = current;
+				}
+				buffer.resize(out);
+				if ( buffer.empty() ) contradictory = true;
+				else if ( buffer.size() == 1 ) assign(buffer[0], 0, -1);
+				else add_clause(buffer);
 			}
 			buffer.clear();
 		}
@@ -414,587 +365,638 @@ int Solver::parseStream( FILE *file ) {
 	return propagate() == -1 ? 0 : 20;
 }
 
-// Pick decision variable based on VSIDS
-int Solver::decide( void ) {
-	// Pop VSIDS max-heap until finding an undefined literal
-    	int next = -1;
-	while ( next == -1 || Value(next) != 0 ||
-	        (!eliminated.empty() && eliminated[next]) ) {
-        	if ( vsids.empty() ) return 10;
-        	else next = vsids.pop();
-    	}
+// Pick decision variable based on VSIDS and the active descent phase policy.
+int Solver::decide() {
+	decides ++;
+	int next = 0;
+	while ( !vsids.empty() ) {
+		const int variable = vsids.pop();
+		if ( value[variable] == 0 && !eliminated[variable] ) {
+			next = variable;
+			break;
+		}
+	}
+	if ( next == 0 ) return 10;
 
-	// Save the decision variable's position in trail
-    	decVarInTrail.push_back(trail.size());
-
-	// If there's saved one (polarity), use that
-	if ( saved[next] ) next *= saved[next];
-
-	// Assign
-    	assign(next, decVarInTrail.size(), -1);
-
-	// Parameter update
-    	decides ++;
-
+	const int decisionLevel = static_cast<int>(decVarInTrail.size());
+	int phase = saved[next];
+	if ( phase == 0 ) phase = -1;
+	if ( randomizeOnRestarts && newDescent && decisionLevel % 2 == 0 ) {
+		phase = ((randomDescentAssignments >> (decisionLevel % 32)) & 1) ? -1 : 1;
+	} else if ( newDescent && forceUNSAT[next] != 0 ) {
+		phase = forceUNSAT[next];
+	}
+	decVarInTrail.push_back(static_cast<int>(trail.size()));
+	assign(next * phase, decisionLevel + 1, -1);
 	return 0;
 }
 
-// Update variable activity
-void Solver::update_score( int var, double coeff ) {
-	// Update score and prevent overflow
-	// Double type bumping scheme
-	if ( (activity[var] += var_inc * coeff) > 1e100 ) {
+// Update variable activity.
+void Solver::update_score( int variable, double coefficient ) {
+	activity[variable] += var_inc * coefficient;
+	if ( activity[variable] > 1e100 ) {
 		for ( int i = 1; i <= vars; i ++ ) activity[i] *= 1e-100;
 		var_inc *= 1e-100;
 	}
-
-	// Update Heap
-    	if ( vsids.inHeap(var) ) vsids.update(var);
+	if ( vsids.inHeap(variable) ) vsids.update(variable);
 }
 
-// Update learnt-clause activity
+// Update learnt-clause activity.
 void Solver::bumpClauseActivity( int cref ) {
-        if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
-
-        Clause &clause = clauseDB[cref];
-        clause.activity += clause_inc;
-        if ( clause.useCount != UINT32_MAX ) clause.useCount ++;
-        clauseActivityBumps ++;
-
-        if ( clause.activity > 1e100 ) {
-                for ( int i = origin_clauses; i < static_cast<int>(clauseDB.size()); i ++ ) {
-                        clauseDB[i].activity *= 1e-100;
-                }
-                clause_inc *= 1e-100;
-        }
-}
-
-// Calculate LBD with the current decision-level assignment
-int Solver::calculateClauseLBD( const Clause &clause ) {
-        lbdStamp ++;
-        if ( lbdStamp == 0 ) {
-                for ( int i = 0; i <= vars; i ++ ) lbdMark[i] = 0;
-                lbdStamp = 1;
-        }
-
-        int currentLBD = 0;
-        for ( int literal : clause.literals ) {
-                const int decisionLevel = level[abs(literal)];
-                if ( decisionLevel > 0 && lbdMark[decisionLevel] != lbdStamp ) {
-                        lbdMark[decisionLevel] = lbdStamp;
-                        currentLBD ++;
-                }
-        }
-
-        return currentLBD;
-}
-
-// Update learnt-clause usage and dynamic LBD
-void Solver::updateClauseQuality( int cref ) {
-	if ( cref < origin_clauses || cref >= static_cast<int>(clauseDB.size()) ) return;
-
-	bumpClauseActivity(cref);
-
+	if ( cref < 0 || cref >= static_cast<int>(clauseDB.size()) ) return;
 	Clause &clause = clauseDB[cref];
-	if ( clause.lbd <= GLUE_LBD ) return;
-
-	const int currentLBD = calculateClauseLBD(clause);
-	if ( currentLBD > 0 && currentLBD + 1 < clause.lbd ) {
-		if ( clause.lbd <= LBD_PROTECTION_MAX ) clause.canBeDeleted = false;
-		clause.lbd = currentLBD;
-		dynamicLBDUpdates ++;
+	if ( !clause.learntClause || clause.removed ) return;
+	clause.activity += clause_inc;
+	if ( clause.useCount != UINT32_MAX ) clause.useCount ++;
+	clauseActivityBumps ++;
+	if ( clause.activity > 1e20 ) {
+		for ( Clause &other : clauseDB ) {
+			if ( other.learntClause ) other.activity *= 1e-20;
+		}
+		clause_inc *= 1e-20;
 	}
 }
 
-// Follow reason chains with explicit storage and roll back unsuccessful proofs.
-bool Solver::isLearntLiteralRedundant( int variable, uint32_t abstractLevels,
-                                      uint32_t membershipStamp ) {
-	const size_t touchedStart = minimizeTouched.size();
-	minimizeStack.clear();
-	minimizeStack.push_back(variable);
-	bool redundant = true;
-
-	while ( !minimizeStack.empty() && redundant ) {
-		const int current = minimizeStack.back();
-		minimizeStack.pop_back();
-		const int reasonClause = reason[current];
-		if ( reasonClause < 0 || reasonClause >= static_cast<int>(clauseDB.size()) ) {
-			redundant = false;
-			break;
-		}
-
-		const Clause &reasonData = clauseDB[reasonClause];
-		for ( size_t i = 0; i < reasonData.literals.size(); i ++ ) {
-			const int other = abs(reasonData.literals[i]);
-			if ( other == current || level[other] == 0 ||
-			     mark[other] == membershipStamp ) continue;
-
-			// Level-bit collisions only permit extra traversal, never deletion.
-			const uint32_t levelBit = uint32_t(1) << (level[other] & 31);
-			const int otherReason = reason[other];
-			if ( (abstractLevels & levelBit) == 0 || otherReason < 0 ||
-			     otherReason >= static_cast<int>(clauseDB.size()) ) {
-				redundant = false;
-				break;
-			}
-
-			mark[other] = membershipStamp;
-			minimizeTouched.push_back(other);
-			minimizeStack.push_back(other);
-		}
-	}
-
-	if ( !redundant ) {
-		for ( size_t i = touchedStart; i < minimizeTouched.size(); i ++ ) {
-			mark[minimizeTouched[i]] = 0;
-		}
-		minimizeTouched.resize(touchedStart);
-	}
-	minimizeStack.clear();
-	return redundant;
+// Count every represented level, including level zero, as Glucose does.
+int Solver::calculateClauseLBD( const Clause &clause ) {
+	return calculateLBD(clause.literals);
 }
 
-// Prove redundancy through the implication graph while retaining the UIP.
-void Solver::minimizeLearntRecursive() {
-	if ( learnt.size() <= 1 ) return;
-
-	nextAnalysisStamp();
-	const uint32_t membershipStamp = time_stamp;
-	uint32_t abstractLevels = 0;
-	minimizeTouched.clear();
-
-	for ( size_t i = 0; i < learnt.size(); i ++ ) {
-		const int variable = abs(learnt[i]);
-		mark[variable] = membershipStamp;
-		if ( i != 0 ) abstractLevels |= uint32_t(1) << (level[variable] & 31);
+int Solver::calculateLBD( const std::vector<int> &literals ) {
+	lbdStamp ++;
+	if ( lbdStamp == 0 ) {
+		for ( int i = 0; i <= vars; i ++ ) lbdMark[i] = 0;
+		lbdStamp = 1;
 	}
-
-	// Original membership remains valid as removed literals are themselves redundant.
-	size_t out = 1;
-	for ( size_t i = 1; i < learnt.size(); i ++ ) {
-		const int literal = learnt[i];
-		const int variable = abs(literal);
-		const int reasonClause = reason[variable];
-		if ( reasonClause >= 0 && reasonClause < static_cast<int>(clauseDB.size()) &&
-		     isLearntLiteralRedundant(variable, abstractLevels, membershipStamp) ) {
-			minimizedLiterals ++;
-		} else {
-			learnt[out] = literal;
-			out ++;
-		}
-	}
-	learnt.resize(out);
-	minimizeTouched.clear();
-}
-
-// Resolve (p OR q OR rest) with a binary (p OR NOT q), preserving the UIP p.
-void Solver::minimizeLearntBinary() {
-	if ( learnt.size() <= 1 || learnt.size() > BINARY_MINIMIZATION_MAX_SIZE ) return;
-
-	nextAnalysisStamp();
 	int currentLBD = 0;
-	for ( size_t i = 0; i < learnt.size(); i ++ ) {
-		const int decisionLevel = level[abs(learnt[i])];
-		if ( decisionLevel > 0 && mark[decisionLevel] != time_stamp ) {
-			mark[decisionLevel] = time_stamp;
+	for ( int literal : literals ) {
+		const int decisionLevel = level[abs(literal)];
+		if ( lbdMark[decisionLevel] != lbdStamp ) {
+			lbdMark[decisionLevel] = lbdStamp;
 			currentLBD ++;
-			if ( currentLBD > BINARY_MINIMIZATION_MAX_LBD ) return;
 		}
 	}
+	return currentLBD;
+}
 
+void Solver::updateClauseQuality( int cref ) {
+	if ( cref < 0 || cref >= static_cast<int>(clauseDB.size()) ) return;
+	Clause &clause = clauseDB[cref];
+	if ( !clause.learntClause || clause.removed ) return;
+	bumpClauseActivity(cref);
+	if ( clause.lbd <= 2 ) return;
+	const int currentLBD = calculateClauseLBD(clause);
+	if ( currentLBD + 1 >= clause.lbd ) return;
+	if ( clause.lbd <= 30 ) clause.removable = false;
+	if ( chanseokStrategy && currentLBD <= coLBDBound ) {
+		if ( !clause.permanent && ordinaryLearntCount > 0 ) ordinaryLearntCount --;
+		clause.learntClause = false;
+		clause.permanent = true;
+	} else {
+		clause.lbd = currentLBD;
+	}
+	dynamicLBDUpdates ++;
+}
+
+// Follow the complete implication graph; roll back only this attempt on failure.
+bool Solver::literalRedundant( int literal, uint32_t abstractLevels ) {
+	analyzeStack.clear();
+	analyzeStack.push_back(literal);
+	const size_t previousSize = analyzeToClear.size();
+	while ( !analyzeStack.empty() ) {
+		const int variable = abs(analyzeStack.back());
+		analyzeStack.pop_back();
+		const int cref = reason[variable];
+		if ( cref < 0 || cref >= static_cast<int>(clauseDB.size()) ) return false;
+		for ( int other : clauseDB[cref].literals ) {
+			const int otherVariable = abs(other);
+			if ( otherVariable == variable || level[otherVariable] == 0 ||
+			     mark[otherVariable] == time_stamp ) continue;
+			if ( reason[otherVariable] >= 0 &&
+			     (abstractLevels & (UINT32_C(1) << (level[otherVariable] & 31))) != 0 ) {
+				mark[otherVariable] = time_stamp;
+				analyzeStack.push_back(other);
+				analyzeToClear.push_back(otherVariable);
+			} else {
+				for ( size_t i = previousSize; i < analyzeToClear.size(); i ++ ) {
+					mark[analyzeToClear[i]] = 0;
+				}
+				analyzeToClear.resize(previousSize);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+// Resolve small learnt clauses with binaries containing the asserting literal.
+void Solver::binaryMinimization() {
+	if ( learnt.size() < 2 || learnt.size() > 30 ) return;
+	if ( calculateLBD(learnt) > 6 ) return;
 	nextAnalysisStamp();
-	const uint32_t membershipStamp = time_stamp;
-	for ( size_t i = 1; i < learnt.size(); i ++ ) {
-		mark[abs(learnt[i])] = membershipStamp;
+	for ( size_t i = 1; i < learnt.size(); i ++ ) mark[abs(learnt[i])] = time_stamp;
+	const std::vector<WL> &watchers = WatchedLiterals(-learnt[0]);
+	for ( const WL &watcher : watchers ) {
+		const Clause &clause = clauseDB[watcher.clauseIdx];
+		if ( clause.removed || clause.literals.size() != 2 ) continue;
+		const int implied = watcher.blocker;
+		if ( Value(implied) == 1 && mark[abs(implied)] == time_stamp ) {
+			mark[abs(implied)] = 0;
+		}
 	}
-
-	const int assertingLiteral = learnt[0];
-	const std::vector<WL> &watchers = WatchedLiterals(-assertingLiteral);
-	for ( size_t i = 0; i < watchers.size(); i ++ ) {
-		const int blocker = watchers[i].blocker;
-		if ( mark[abs(blocker)] != membershipStamp || Value(blocker) != 1 ) continue;
-
-		const int cref = watchers[i].clauseIdx;
-		if ( cref < 0 || cref >= static_cast<int>(clauseDB.size()) ) continue;
-		const Clause &clause = clauseDB[cref];
-		if ( clause.literals.size() != 2 ) continue;
-
-		int otherLiteral = 0;
-		if ( clause.literals[0] == assertingLiteral ) otherLiteral = clause.literals[1];
-		else if ( clause.literals[1] == assertingLiteral ) otherLiteral = clause.literals[0];
-		else continue;
-
-		// Every learnt literal is false; the true binary partner has opposite polarity.
-		const int other = abs(otherLiteral);
-		if ( mark[other] == membershipStamp && Value(otherLiteral) == 1 ) mark[other] = 0;
-	}
-
-	size_t out = 1;
-	for ( size_t i = 1; i < learnt.size(); i ++ ) {
-		if ( mark[abs(learnt[i])] == membershipStamp ) {
-			learnt[out] = learnt[i];
-			out ++;
-		} else {
+	size_t end = learnt.size();
+	for ( size_t i = 1; i < end; ) {
+		if ( mark[abs(learnt[i])] == time_stamp ) i ++;
+		else {
+			std::swap(learnt[i], learnt[-- end]);
 			minimizedLiterals ++;
 		}
 	}
-	learnt.resize(out);
+	learnt.resize(end);
 }
 
-// Conflict analysis
+// First-UIP analysis, recursive minimization, binary resolution, and LBD bump.
 int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
-        nextAnalysisStamp();
-        learnt.clear();
+	if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) return 30;
+	const int conflictLevel = static_cast<int>(decVarInTrail.size());
+	if ( conflictLevel == 0 ) return 20;
+	nextAnalysisStamp();
+	learnt.clear();
+	learnt.push_back(0);
+	lastDecisionLevel.clear();
+	int unresolved = 0;
+	int resolveLiteral = 0;
+	int trailIndex = static_cast<int>(trail.size()) - 1;
+	do {
+		if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) return 30;
+		updateClauseQuality(conflict);
+		const Clause &clause = clauseDB[conflict];
+		for ( int literal : clause.literals ) {
+			const int variable = abs(literal);
+			if ( variable == abs(resolveLiteral) || mark[variable] == time_stamp ||
+			     level[variable] == 0 ) continue;
+			update_score(variable, 1.0);
+			forceUNSAT[variable] = literal > 0 ? -1 : 1;
+			mark[variable] = time_stamp;
+			if ( level[variable] == conflictLevel ) {
+				unresolved ++;
+				if ( reason[variable] >= 0 && clauseDB[reason[variable]].learntClause ) {
+					lastDecisionLevel.push_back(variable);
+				}
+			} else learnt.push_back(literal);
+		}
+		while ( trailIndex >= 0 && mark[abs(trail[trailIndex])] != time_stamp ) trailIndex --;
+		if ( trailIndex < 0 || unresolved == 0 ) return 30;
+		resolveLiteral = trail[trailIndex --];
+		mark[abs(resolveLiteral)] = 0;
+		unresolved --;
+		conflict = reason[abs(resolveLiteral)];
+	} while ( unresolved > 0 );
+	learnt[0] = -resolveLiteral;
 
-        if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
-                fprintf( stderr, "internal error: invalid conflict clause\n" );
-                return 30;
-        }
+	analyzeToClear.clear();
+	nextAnalysisStamp();
+	uint32_t abstractLevels = 0;
+	for ( size_t i = 0; i < learnt.size(); i ++ ) {
+		mark[abs(learnt[i])] = time_stamp;
+		if ( i != 0 ) abstractLevels |= UINT32_C(1) << (level[abs(learnt[i])] & 31);
+	}
+	size_t out = 1;
+	for ( size_t i = 1; i < learnt.size(); i ++ ) {
+		if ( reason[abs(learnt[i])] >= 0 && literalRedundant(learnt[i], abstractLevels) ) {
+			minimizedLiterals ++;
+		} else learnt[out ++] = learnt[i];
+	}
+	learnt.resize(out);
+	binaryMinimization();
 
-        const int conflictLevel = static_cast<int>(decVarInTrail.size());
-        if ( conflictLevel == 0 ) return 20;
+	lbd = calculateLBD(learnt);
+	if ( lbd_queue_size < 50 ) lbd_queue_size ++;
+	else fast_lbd_sum -= lbd_queue[lbd_queue_pos];
+	lbd_queue[lbd_queue_pos ++] = lbd;
+	if ( lbd_queue_pos == 50 ) lbd_queue_pos = 0;
+	fast_lbd_sum += lbd;
+	slow_lbd_sum += lbd;
 
-        learnt.push_back(0);
-        int unresolved = 0;
-        int resolveLiteral = 0;
-        int trailIndex = static_cast<int>(trail.size()) - 1;
-        std::vector<int> bump;
-        bump.reserve(32);
-
-        do {
-                if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) {
-                        fprintf( stderr, "internal error: invalid reason clause\n" );
-                        return 30;
-                }
-
-                updateClauseQuality(conflict);
-                Clause &clause = clauseDB[conflict];
-                const int begin = resolveLiteral == 0 ? 0 : 1;
-                for ( int i = begin; i < static_cast<int>(clause.literals.size()); i ++ ) {
-                        const int variable = abs(clause[i]);
-                        if ( mark[variable] == time_stamp || level[variable] == 0 ) continue;
-
-                        update_score(variable, 0.5);
-                        bump.push_back(variable);
-                        mark[variable] = time_stamp;
-
-                        if ( level[variable] == conflictLevel ) ++unresolved;
-                        else learnt.push_back(clause[i]);
-                }
-
-                while ( trailIndex >= 0 &&
-                        mark[abs(trail[trailIndex])] != time_stamp ) --trailIndex;
-                if ( trailIndex < 0 ) {
-                        fprintf( stderr, "internal error: malformed implication graph\n" );
-                        return 30;
-                }
-
-                resolveLiteral = trail[trailIndex --];
-                mark[abs(resolveLiteral)] = 0;
-                --unresolved;
-
-                if ( unresolved > 0 ) {
-                        const int nextReason = reason[abs(resolveLiteral)];
-                        if ( nextReason < 0 ||
-                             nextReason >= static_cast<int>(clauseDB.size()) ) {
-                                fprintf( stderr, "internal error: invalid reason clause\n" );
-                                return 30;
-                        }
-                        conflict = nextReason;
-                }
-        } while ( unresolved > 0 );
-
-        learnt[0] = -resolveLiteral;
-
-	minimizeLearntRecursive();
-	minimizeLearntBinary();
-
-        nextAnalysisStamp();
-        lbd = 0;
-        for ( int literal : learnt ) {
-                const int decisionLevel = level[abs(literal)];
-                if ( decisionLevel && mark[decisionLevel] != time_stamp ) {
-                        mark[decisionLevel] = time_stamp;
-                        ++lbd;
-                }
-        }
-
-        if ( lbd_queue_size < 50 ) ++lbd_queue_size;
-        else fast_lbd_sum -= lbd_queue[lbd_queue_pos];
-        lbd_queue[lbd_queue_pos ++] = lbd;
-        if ( lbd_queue_pos == 50 ) lbd_queue_pos = 0;
-        fast_lbd_sum += lbd;
-        slow_lbd_sum += lbd;
-
-        if ( learnt.size() == 1 ) {
-                backtrackLevel = 0;
-        } else {
-                int maxIndex = 1;
-                for ( int i = 2; i < static_cast<int>(learnt.size()); i ++ ) {
-                        if ( level[abs(learnt[i])] > level[abs(learnt[maxIndex])] ) {
-                                maxIndex = i;
-                        }
-                }
-                std::swap(learnt[1], learnt[maxIndex]);
-                backtrackLevel = level[abs(learnt[1])];
-        }
-
-        // Original second-stage bump retained after the ablation trial.
-        for ( int variable : bump ) {
-                if ( level[variable] >= backtrackLevel - 1 ) update_score(variable, 1.0);
-        }
-
-        return 0;
+	backtrackLevel = 0;
+	if ( learnt.size() > 1 ) {
+		size_t maxIndex = 1;
+		for ( size_t i = 2; i < learnt.size(); i ++ ) {
+			if ( level[abs(learnt[i])] > level[abs(learnt[maxIndex])] ) maxIndex = i;
+		}
+		std::swap(learnt[1], learnt[maxIndex]);
+		backtrackLevel = level[abs(learnt[1])];
+	}
+	for ( int variable : lastDecisionLevel ) {
+		if ( clauseDB[reason[variable]].lbd < lbd ) update_score(variable, 1.0);
+	}
+	return 0;
 }
 
-// Backtracking
+// Full phase saving and non-chronological backtracking.
 void Solver::backtrack( int backtrackLevel ) {
-        if ( static_cast<int>(decVarInTrail.size()) <= backtrackLevel ) return;
-
-        const int trailLimit = decVarInTrail[backtrackLevel];
-        for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
-                const int variable = abs(trail[i]);
-
-                saved[variable] = trail[i] > 0 ? 1 : -1;
-                value[variable] = 0;
-                reason[variable] = -1;
-                level[variable] = 0;
-
-                if ( !vsids.inHeap(variable) ) vsids.insert(variable);
-        }
-
-        propagated = trailLimit;
-        trail.resize(propagated);
-        decVarInTrail.resize(backtrackLevel);
+	if ( static_cast<int>(decVarInTrail.size()) <= backtrackLevel ) return;
+	const int trailLimit = decVarInTrail[backtrackLevel];
+	for ( int i = static_cast<int>(trail.size()) - 1; i >= trailLimit; i -- ) {
+		const int variable = abs(trail[i]);
+		saved[variable] = trail[i] > 0 ? 1 : -1;
+		value[variable] = 0;
+		reason[variable] = -1;
+		level[variable] = 0;
+		if ( !eliminated[variable] && !vsids.inHeap(variable) ) vsids.insert(variable);
+	}
+	propagated = trailLimit;
+	trail.resize(trailLimit);
+	decVarInTrail.resize(backtrackLevel);
 }
 
-// Delay LBD restarts while conflict-time assignments are unusually deep.
-void Solver::updateRestartBlocking() {
-	const int trailSize = static_cast<int>(trail.size());
-	if ( trail_queue_size < RESTART_TRAIL_WINDOW ) trail_queue_size ++;
-	else trail_queue_sum -= static_cast<uint64_t>(trail_queue[trail_queue_pos]);
-	trail_queue[trail_queue_pos] = trailSize;
-	trail_queue_sum += static_cast<uint64_t>(trailSize);
-	trail_queue_pos ++;
-	if ( trail_queue_pos == RESTART_TRAIL_WINDOW ) trail_queue_pos = 0;
-
-	// conflicts counts completed analyses; this conflict is the next one.
-	if ( conflicts < RESTART_BLOCKING_START || lbd_queue_size != 50 ||
-	     trail_queue_size != RESTART_TRAIL_WINDOW ) return;
-	const double averageTrail = static_cast<double>(trail_queue_sum) / trail_queue_size;
-	if ( trailSize <= RESTART_BLOCKING_FACTOR * averageTrail ) return;
-
+void Solver::clearLBDQueue() {
 	fast_lbd_sum = 0;
-	lbd_queue_size = 0;
-	lbd_queue_pos = 0;
-	blockedRestarts ++;
+	lbd_queue_size = lbd_queue_pos = 0;
 }
 
-// Gradually retain a longer VSIDS activity history.
-void Solver::updateVSIDSDecay() {
-	if ( conflicts == 0 || conflicts % VSIDS_DECAY_INTERVAL != 0 ||
-	     var_decay >= VSIDS_DECAY_MAX ) return;
-	var_decay = std::min(VSIDS_DECAY_MAX, var_decay + 0.01);
-	varDecayUpdates ++;
+void Solver::pushTrailSize() {
+	if ( trail_queue_size < 5000 ) trail_queue_size ++;
+	else trailQueueSum -= trail_queue[trail_queue_pos];
+	trail_queue[trail_queue_pos ++] = static_cast<int>(trail.size());
+	if ( trail_queue_pos == 5000 ) trail_queue_pos = 0;
+	trailQueueSum += trail.size();
+	if ( conflictsRestarts > 10000 && lbd_queue_size == 50 &&
+	     trail.size() > 1.4 * (trailQueueSum / trail_queue_size) ) {
+		clearLBDQueue();
+		blockedRestarts ++;
+	}
 }
 
-// Restart from the root while retaining learnt clauses and saved phases.
+bool Solver::shouldRestart( uint64_t searchConflicts, uint64_t conflictBudget ) {
+	if ( lubyRestart ) return searchConflicts >= conflictBudget;
+	if ( lbd_queue_size != 50 || conflictsRestarts == 0 ) return false;
+	const uint64_t recentAverage = static_cast<uint64_t>(fast_lbd_sum) / lbd_queue_size;
+	return 0.8 * recentAverage > slow_lbd_sum / conflictsRestarts;
+}
+
+static double nextRandom( double &seed ) {
+	seed *= 1389796;
+	const int quotient = static_cast<int>(seed / 2147483647);
+	seed -= static_cast<double>(quotient) * 2147483647;
+	return seed / 2147483647;
+}
+
 void Solver::restart() {
+	clearLBDQueue();
+	newDescent = true;
+	if ( randomizeOnRestarts ) {
+		// Scale before conversion: the upstream unscaled cast always yielded zero.
+		randomDescentAssignments = static_cast<uint32_t>(nextRandom(randomSeed) * 4294967296.0);
+	}
 	backtrack(0);
-	fast_lbd_sum = 0;
-	lbd_queue_size = 0;
-	lbd_queue_pos = 0;
 	restarts ++;
 }
 
-// Rephase from the root.
-void Solver::rephase() {
-	// Finish ordinary phase saving before installing the new phase targets.
-	backtrack(0);
-
-	// Retain V3's phase-selection sequence and conflict-based schedule.
-	if ( rephases / 2 == 1 ) {
-		for ( int i = 1; i <= vars; i ++ ) saved[i] = local_best[i];
-	} else {
-		for ( int i = 1; i <= vars; i ++ ) saved[i] = -local_best[i];
+uint64_t Solver::luby( uint64_t index ) {
+	uint64_t size = 1;
+	unsigned int exponent = 0;
+	while ( size <= index && size <= (UINT64_MAX - 1) / 2 ) {
+		size = 2 * size + 1;
+		exponent ++;
 	}
-
-	if ( rephase_inc <= UINT64_MAX / 2 ) rephase_inc *= 2;
-	else rephase_inc = UINT64_MAX;
-	if ( conflicts <= UINT64_MAX - rephase_inc ) {
-		rephase_limit = conflicts + rephase_inc;
-	} else {
-		rephase_limit = UINT64_MAX;
+	while ( size - 1 != index ) {
+		size = (size - 1) / 2;
+		if ( size == 0 ) return 1;
+		exponent --;
+		index %= size;
 	}
-	rephases ++;
+	return UINT64_C(1) << exponent;
 }
 
-// Clause deletion
+// Rebuild watches after structural edits while preserving the active trail.
+void Solver::rebuildWatches() {
+	for ( int i = 0; i <= 2 * vars; i ++ ) watched_literals[i].clear();
+	for ( int i = 0; i < static_cast<int>(clauseDB.size()); i ++ ) {
+		Clause &clause = clauseDB[i];
+		if ( clause.removed || clause.literals.size() < 2 ) continue;
+		WatchedLiterals(-clause[0]).push_back(WL(i, clause[1]));
+		WatchedLiterals(-clause[1]).push_back(WL(i, clause[0]));
+	}
+}
+
+void Solver::compactClauses() {
+	reduceMap.assign(clauseDB.size(), -1);
+	int out = 0;
+	origin_clauses = 0;
+	ordinaryLearntCount = 0;
+	for ( int i = 0; i < static_cast<int>(clauseDB.size()); i ++ ) {
+		if ( clauseDB[i].removed ) continue;
+		if ( !clauseDB[i].learntClause && !clauseDB[i].permanent ) origin_clauses ++;
+		if ( clauseDB[i].learntClause && !clauseDB[i].permanent ) ordinaryLearntCount ++;
+		reduceMap[i] = out;
+		if ( out != i ) clauseDB[out] = std::move(clauseDB[i]);
+		out ++;
+	}
+	clauseDB.erase(clauseDB.begin() + out, clauseDB.end());
+	for ( int literal : trail ) {
+		int &cref = reason[abs(literal)];
+		if ( cref >= 0 ) cref = reduceMap[cref];
+	}
+	rebuildWatches();
+}
+
+// Root BCP, satisfied-clause removal, and falsified-literal cleanup.
+bool Solver::simplifyRoot() {
+	if ( !decVarInTrail.empty() ) return false;
+	while ( true ) {
+		if ( propagate() != -1 ) return false;
+		bool changed = false;
+		bool assigned = false;
+		for ( Clause &clause : clauseDB ) {
+			if ( clause.removed ) continue;
+			bool satisfied = false;
+			for ( int literal : clause.literals ) {
+				if ( Value(literal) == 1 ) {
+					satisfied = true;
+					break;
+				}
+			}
+			if ( satisfied ) {
+				clause.removed = true;
+				changed = true;
+				continue;
+			}
+			size_t out = 0;
+			for ( int literal : clause.literals ) {
+				if ( Value(literal) != -1 ) clause[out ++] = literal;
+			}
+			if ( out == 0 ) return false;
+			if ( out != clause.literals.size() ) {
+				clause.literals.resize(out);
+				changed = true;
+			}
+			if ( out == 1 ) {
+				assign(clause[0], 0, -1);
+				clause.removed = true;
+				assigned = changed = true;
+			}
+		}
+		if ( changed ) compactClauses();
+		if ( !assigned ) break;
+	}
+	simpDBAssigns = static_cast<int>(trail.size());
+	simpDBProps = 0;
+	for ( const Clause &clause : clauseDB ) {
+		if ( clause.literals.size() <= static_cast<uint64_t>(INT64_MAX - simpDBProps) ) {
+			simpDBProps += clause.literals.size();
+		} else simpDBProps = INT64_MAX;
+	}
+	vsids.initialize(activity, vars);
+	for ( int variable = 1; variable <= vars; variable ++ ) {
+		if ( !eliminated[variable] && value[variable] == 0 ) vsids.insert(variable);
+	}
+	return true;
+}
+
+struct ClauseRank {
+	int index;
+	int lbd;
+	double activity;
+	bool binary;
+};
+
+static bool lowerActivity( const ClauseRank &first, const ClauseRank &second ) {
+	if ( first.binary != second.binary ) return !first.binary;
+	if ( first.binary ) return false;
+	return first.activity < second.activity;
+}
+
+static bool lowerQuality( const ClauseRank &first, const ClauseRank &second ) {
+	if ( first.binary != second.binary ) return !first.binary;
+	if ( first.binary ) return false;
+	if ( first.lbd != second.lbd ) return first.lbd > second.lbd;
+	return first.activity < second.activity;
+}
+
+// Protect all current reasons and apply Glucose's full-learnt-set deletion limit.
 void Solver::reduce() {
-        // Preserve the current trail and every clause used as its reason.
-        reduces = 0;
-        if ( reduce_limit <= UINT64_MAX - 512 ) reduce_limit += 512;
-        else reduce_limit = UINT64_MAX;
-        ++reductionRuns;
-
-        const int oldSize = static_cast<int>(clauseDB.size());
-        reduceMap.assign(oldSize, -1);
-
-        std::vector<unsigned char> locked(oldSize, 0);
-        for ( int literal : trail ) {
-                const int clause = reason[abs(literal)];
-                if ( clause >= origin_clauses && clause < oldSize ) locked[clause] = 1;
-        }
-
-	std::vector<ClauseRank> candidates;
-	candidates.reserve(oldSize - origin_clauses);
-	for ( int i = origin_clauses; i < oldSize; i ++ ) {
+	std::vector<ClauseRank> ranks;
+	for ( int i = 0; i < static_cast<int>(clauseDB.size()); i ++ ) {
 		const Clause &clause = clauseDB[i];
-		candidates.push_back({i, clause.lbd, clause.literals.size(), clause.activity});
+		if ( clause.learntClause && !clause.permanent && !clause.removed ) {
+			ranks.push_back({i, clause.lbd, clause.activity, clause.literals.size() == 2});
+		}
 	}
-
-	// Glucose 4.2.1 also protects the most active 10%, rounding upward.
-	std::sort(candidates.begin(), candidates.end(), higherClauseActivity);
-	const size_t activeCount = candidates.size() - candidates.size() * 90 / 100;
-	for ( size_t i = 0; i < activeCount; i ++ ) {
-		clauseDB[candidates[i].clauseIdx].canBeDeleted = false;
+	if ( ranks.empty() ) return;
+	reductionRuns ++;
+	reduces ++;
+	std::vector<uint8_t> locked(clauseDB.size(), 0);
+	for ( int literal : trail ) {
+		if ( reason[abs(literal)] >= 0 ) locked[reason[abs(literal)]] = 1;
 	}
-	std::sort(candidates.begin(), candidates.end(), worseClauseLBD);
-
-	std::vector<unsigned char> erase(oldSize, 0);
-	size_t deleteLimit = candidates.size() / 2;
-	uint64_t deleteCount = 0;
-	for ( size_t i = 0; i < candidates.size(); i ++ ) {
-		const int cref = candidates[i].clauseIdx;
-		Clause &clause = clauseDB[cref];
-		if ( i < deleteLimit && clause.literals.size() > 2 &&
-		     clause.lbd > GLUE_LBD && !locked[cref] && clause.canBeDeleted ) {
-			erase[cref] = 1;
-			deleteCount ++;
+	std::sort(ranks.begin(), ranks.end(), lowerActivity);
+	if ( !chanseokStrategy ) {
+		for ( size_t i = ranks.size() * 90 / 100; i < ranks.size(); i ++ ) {
+			clauseDB[ranks[i].index].removable = false;
+		}
+		std::sort(ranks.begin(), ranks.end(), lowerQuality);
+		if ( ranks[ranks.size() / 2].lbd <= 3 ) nbclausesbeforereduce += specialIncReduceDB;
+		if ( ranks.back().lbd <= 5 ) nbclausesbeforereduce += specialIncReduceDB;
+	}
+	size_t limit = ranks.size() / 2;
+	for ( size_t i = 0; i < ranks.size(); i ++ ) {
+		Clause &clause = clauseDB[ranks[i].index];
+		if ( clause.lbd > 2 && clause.literals.size() > 2 && clause.removable &&
+		     !locked[ranks[i].index] && i < limit ) {
+			clause.removed = true;
+			deletedClauses ++;
 		} else {
-			// A protected clause survives this cycle without consuming a deletion slot.
-			if ( !clause.canBeDeleted && deleteLimit < candidates.size() ) deleteLimit ++;
-			clause.canBeDeleted = true;
+			if ( !clause.removable ) limit ++;
+			clause.removable = true;
 		}
 	}
-	deletedClauses += deleteCount;
-
-        int newSize = origin_clauses;
-        for ( int i = 0; i < origin_clauses; i ++ ) reduceMap[i] = i;
-        for ( int i = origin_clauses; i < oldSize; i ++ ) {
-                if ( erase[i] ) continue;
-                if ( newSize != i ) clauseDB[newSize] = std::move(clauseDB[i]);
-                reduceMap[i] = newSize ++;
-        }
-        clauseDB.erase(clauseDB.begin() + newSize, clauseDB.end());
-
-        for ( int literal : trail ) {
-                const int variable = abs(literal);
-                if ( reason[variable] >= origin_clauses ) {
-                        reason[variable] = reduceMap[reason[variable]];
-                }
-        }
-
-        for ( int literal = -vars; literal <= vars; literal ++ ) {
-                if ( literal == 0 ) continue;
-                std::vector<WL> &watchers = WatchedLiterals(literal);
-                int out = 0;
-                for ( int i = 0; i < static_cast<int>(watchers.size()); i ++ ) {
-                        const int oldIndex = watchers[i].clauseIdx;
-                        const int newIndex = oldIndex < origin_clauses
-                                ? oldIndex : reduceMap[oldIndex];
-                        if ( newIndex == -1 ) continue;
-                        watchers[i].clauseIdx = newIndex;
-                        if ( out != i ) watchers[out] = watchers[i];
-                        ++out;
-                }
-                watchers.resize(out);
-        }
+	compactClauses();
 }
 
-// Solver
-int Solver::solve() {
-        int result = 0;
-        const double processStart = timeCheckerCPU();
-        double timeLimit = 2000.0;
-        if ( const char *env = getenv("UATU_TIMEOUT_SEC") ) {
-                const double parsed = atof(env);
-                if ( parsed > 0.0 ) timeLimit = parsed;
-        }
-
-        unsigned long long loopCounter = 0;
-	uint64_t nextVivification = VIVIFICATION_INTERVAL;
-	result = preprocess();
-        auto updateLocalBest = [&]() {
-                if ( static_cast<int>(trail.size()) <= threshold ) return;
-                threshold = static_cast<int>(trail.size());
-                memcpy(local_best + 1, value + 1,
-                       static_cast<size_t>(vars) * sizeof(*value));
-        };
-
-        while ( !result ) {
-                if ( (loopCounter++ & 4095ULL) == 0 &&
-                     timeCheckerCPU() - processStart >= timeLimit ) {
-                        result = 30;
-                        break;
-                }
-		if ( decVarInTrail.empty() && conflicts >= nextVivification ) {
-			result = vivifyLearnts();
-			nextVivification = conflicts <= UINT64_MAX - VIVIFICATION_INTERVAL
-				? conflicts + VIVIFICATION_INTERVAL : UINT64_MAX;
-			if ( result != 0 ) break;
+// Glucose 4.2.1's four independent automatic strategy tests.
+void Solver::adaptSolver() {
+	bool adjusted = false;
+	bool reinitialize = false;
+	const float decisionsPerConflict = conflicts == 0 ? 0.0f :
+		static_cast<float>(decides) / static_cast<float>(conflicts);
+	if ( decisionsPerConflict <= 1.2f ) {
+		chanseokStrategy = true;
+		coLBDBound = 4;
+		glureduce = true;
+		adjusted = reinitialize = true;
+		firstReduceDB = nbclausesbeforereduce = 2000;
+		curRestart = conflicts / nbclausesbeforereduce + 1;
+		incReduceDB = 0;
+	}
+	if ( noDecisionConflict < 30000 ) {
+		lubyRestart = true;
+		var_decay = max_var_decay = 0.999;
+		adjusted = true;
+	}
+	if ( noDecisionConflict > 54400 ) {
+		chanseokStrategy = glureduce = true;
+		coLBDBound = 3;
+		firstReduceDB = 30000;
+		var_decay = max_var_decay = 0.99;
+		randomizeOnRestarts = true;
+		adjusted = true;
+	}
+	if ( learntGlue > learntBinary && learntGlue - learntBinary > 20000 ) {
+		var_decay = max_var_decay = 0.91;
+		adjusted = true;
+	}
+	if ( adjusted ) {
+		clearLBDQueue();
+		slow_lbd_sum = 0;
+		conflictsRestarts = 0;
+	}
+	if ( chanseokStrategy && adjusted ) {
+		for ( Clause &clause : clauseDB ) {
+			if ( clause.learntClause && !clause.permanent && clause.lbd <= coLBDBound ) {
+				clause.permanent = true;
+				if ( ordinaryLearntCount > 0 ) ordinaryLearntCount --;
+			}
 		}
-
-                const int conflictClause = propagate();
-                if ( conflictClause != -1 ) {
-                        updateLocalBest();
-			if ( !decVarInTrail.empty() ) updateRestartBlocking();
-
-                        int backtrackLevel = 0;
-                        int lbd = 0;
-                        result = analyze(conflictClause, backtrackLevel, lbd);
-                        if ( result != 0 ) break;
-
-                        backtrack(backtrackLevel);
-                        if ( learnt.size() == 1 ) {
-                                assign(learnt[0], 0, -1);
-                        } else {
-                                const int learnedClause = add_clause(learnt);
-                                clauseDB[learnedClause].lbd = lbd;
-                                assign(learnt[0], backtrackLevel, learnedClause);
-                        }
-
-                        ++conflicts;
-			updateVSIDSDecay();
-			var_inc *= 1.0 / var_decay;
-			clause_inc *= 1.0 / clause_decay;
-                        ++reduces;
-                } else if ( reduces >= reduce_limit ) {
-                        reduce();
-                } else if ( conflicts > 0 && lbd_queue_size == 50 &&
-                            0.8 * fast_lbd_sum / lbd_queue_size >
-                                    slow_lbd_sum / conflicts ) {
-                        restart();
-                } else if ( conflicts >= rephase_limit ) {
-                        rephase();
-                } else {
-                        result = decide();
-                }
-        }
-
-	if ( result == 10 ) extendModel();
-        processTimeFinal = timeCheckerCPU() - processStart;
-        printf( "Elapsed Time [Total] (CPU): %.4f\n", processTimeFinal );
-#if UATU_PROFILE_BCP
-        printf( "Elapsed Time [Propa] (wall): %.4f\n", propagaTimeFinal );
-        printf( "Elapsed Time [MaxBCP] (wall): %.4f\n", maxBCPTime );
-#endif
-        printf( "----------------------------------------------------\n" );
-        return result;
+	}
+	if ( reinitialize ) {
+		for ( Clause &clause : clauseDB ) {
+			if ( clause.learntClause && !clause.permanent ) clause.removed = true;
+		}
+		compactClauses();
+	}
 }
 
-// Print model when the result is SAT
+bool Solver::withinBudget() const {
+	return cpuDeadline <= 0.0 || timeCheckerCPU() < cpuDeadline;
+}
+
+// Preprocess once; perform queued LCM at the next search entry.
+int Solver::solve() {
+	int result = 0;
+	const double processStart = timeCheckerCPU();
+	double timeLimit = 2000.0;
+	if ( const char *env = getenv("UATU_TIMEOUT_SEC") ) {
+		const double parsed = atof(env);
+		if ( parsed > 0.0 ) timeLimit = parsed;
+	}
+	cpuDeadline = processStart + timeLimit;
+	if ( !preprocessingDone ) {
+		result = preprocess();
+		preprocessingDone = true;
+	}
+	ordinaryLearntCount = 0;
+	for ( const Clause &clause : clauseDB ) {
+		if ( clause.learntClause && !clause.permanent && !clause.removed ) ordinaryLearntCount ++;
+	}
+	bool searchEntry = true;
+	bool decisionWasMade = false;
+	uint64_t searchConflicts = 0;
+	uint64_t searchIndex = 0;
+	uint64_t conflictBudget = 0;
+	uint64_t loopCounter = 0;
+	while ( result == 0 ) {
+		if ( (loopCounter ++ & 4095) == 0 && !withinBudget() ) {
+			result = 30;
+			break;
+		}
+		if ( searchEntry ) {
+			searchConflicts = 0;
+			decisionWasMade = false;
+			const uint64_t sequence = luby(searchIndex);
+			conflictBudget = sequence <= UINT64_MAX / 100 ? sequence * 100 : UINT64_MAX;
+			if ( performLCM ) {
+				result = vivifyLearnts();
+				performLCM = false;
+				if ( result != 0 ) break;
+			}
+			searchEntry = false;
+		}
+		const int conflict = propagate();
+		if ( conflict != -1 ) {
+			newDescent = false;
+			if ( !decisionWasMade ) noDecisionConflict ++;
+			decisionWasMade = false;
+			conflicts ++;
+			searchConflicts ++;
+			conflictsRestarts ++;
+			if ( conflicts % 5000 == 0 && var_decay < max_var_decay ) {
+				var_decay = std::min(var_decay + 0.01, max_var_decay);
+			}
+			if ( decVarInTrail.empty() ) {
+				result = 20;
+				break;
+			}
+			if ( adaptStrategies && conflicts == 100000 ) {
+				backtrack(0);
+				adaptSolver();
+				adaptStrategies = false;
+				searchEntry = true;
+				searchIndex ++;
+				continue;
+			}
+			pushTrailSize();
+			int backtrackLevel = 0;
+			int lbd = 0;
+			result = analyze(conflict, backtrackLevel, lbd);
+			if ( result != 0 ) break;
+			backtrack(backtrackLevel);
+			if ( learnt.size() == 1 ) assign(learnt[0], 0, -1);
+			else {
+				const int cref = add_clause(learnt);
+				Clause &clause = clauseDB[cref];
+				clause.lbd = lbd;
+				if ( chanseokStrategy && lbd <= coLBDBound ) clause.permanent = true;
+				else {
+					clause.learntClause = true;
+					ordinaryLearntCount ++;
+					bumpClauseActivity(cref);
+				}
+				if ( lbd <= 2 ) learntGlue ++;
+				if ( learnt.size() == 2 ) learntBinary ++;
+				assign(learnt[0], backtrackLevel, cref);
+			}
+			var_inc /= var_decay;
+			clause_inc /= clause_decay;
+		} else {
+			if ( shouldRestart(searchConflicts, conflictBudget) ) {
+				restart();
+				searchEntry = true;
+				searchIndex ++;
+				continue;
+			}
+			if ( decVarInTrail.empty() && simpDBAssigns != static_cast<int>(trail.size()) &&
+			     simpDBProps <= 0 && !simplifyRoot() ) {
+				result = 20;
+				break;
+			}
+			const bool reductionDue = glureduce && nbclausesbeforereduce != 0 &&
+				conflicts / nbclausesbeforereduce >= curRestart;
+			if ( reductionDue || (chanseokStrategy && !glureduce) ) {
+				if ( ordinaryLearntCount > 0 && (glureduce || ordinaryLearntCount > firstReduceDB) ) {
+					curRestart = conflicts / nbclausesbeforereduce + 1;
+					reduce();
+					performLCM = true;
+					nbclausesbeforereduce += incReduceDB;
+				}
+			}
+			result = decide();
+			decisionWasMade = result == 0;
+		}
+	}
+	if ( result == 10 && !extendModel() ) result = 30;
+	processTimeFinal = timeCheckerCPU() - processStart;
+	printf( "Elapsed Time [Total] (CPU): %.4f\n", processTimeFinal );
+#if UATU_PROFILE_BCP
+	printf( "Elapsed Time [Propa] (wall): %.4f\n", propagaTimeFinal );
+	printf( "Elapsed Time [MaxBCP] (wall): %.4f\n", maxBCPTime );
+#endif
+	printf( "----------------------------------------------------\n" );
+	fflush( stdout );
+	return result;
+}
+
 void Solver::printModel() {
-    	for ( int i = 1; i <= vars; i ++ ) printf( "%d ", value[i] * i );
-    	printf( "0\n" );
+	for ( int i = 1; i <= vars; i ++ ) printf( "%d ", value[i] * i );
+	printf( "0\n" );
 }

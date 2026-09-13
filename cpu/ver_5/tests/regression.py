@@ -1,638 +1,171 @@
 #!/usr/bin/env python3
-"""Run Ver5 solver regressions. Requires g++, Linux prlimit, and Python 3.
+"""Check SAT semantics against exhaustive enumeration and an external solver.
 
-No competition performance score is computed here. Counter probes deliberately
-start near integer boundaries; production solver initialization remains zero.
+The second driver skips preprocessing to exercise conflict analysis directly.
+No performance score is inferred from this correctness suite.
 """
 import argparse
+import hashlib
 import itertools
 import json
 import os
 from pathlib import Path
 import random
 import re
-import shutil
 import subprocess
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-SOLVER_SOURCES = [ROOT / name for name in ('solver.cpp', 'preprocess.cpp', 'vivify.cpp')]
 FLAGS = ['-std=c++17', '-Wall', '-Wextra', '-Wpedantic', '-Werror']
-SAN = ['-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie']
-
-UNIT = r'''#include "solver.h"
-#include <cassert>
-#include <inttypes.h>
-
-int main() {
-	{
-		Solver s{};
-		s.vars = 3;
-		s.clauses = 2;
-		s.initialize();
-		std::vector<int> first{-1, 2};
-		std::vector<int> second{-2, 3};
-		s.add_clause(first);
-		s.add_clause(second);
-		s.unitPropagations = INT_MAX;
-		s.bcpFunctionCalls = INT_MAX;
-		s.assign(1, 0, -1);
-		assert(s.propagate() == -1);
-		assert(s.unitPropagations == uint64_t(INT_MAX) + 2);
-		assert(s.bcpFunctionCalls == uint64_t(INT_MAX) + 1);
-		assert(s.value[2] == 1 && s.value[3] == 1);
-		s.time_stamp = UINT32_MAX;
-		for ( int i = 0; i <= s.vars; i ++ ) s.mark[i] = UINT32_MAX;
-		s.nextAnalysisStamp();
-		assert(s.time_stamp == 1);
-		for ( int i = 0; i <= s.vars; i ++ ) assert(s.mark[i] == 0);
-	}
-	{
-		Solver s{};
-		s.vars = 2;
-		s.clauses = 4;
-		s.initialize();
-		for ( int a = -1; a <= 1; a += 2 ) {
-			for ( int b = -1; b <= 1; b += 2 ) {
-				std::vector<int> clause{a, 2 * b};
-				s.add_clause(clause);
-			}
-		}
-		s.origin_clauses = 4;
-		s.conflicts = INT_MAX;
-		s.decides = INT_MAX;
-		s.time_stamp = UINT32_MAX - 1;
-		assert(s.decide() == 0);
-		const int conflict = s.propagate();
-		assert(conflict >= 0);
-		int backtrackLevel = 0;
-		int lbd = 0;
-		assert(s.analyze(conflict, backtrackLevel, lbd) == 0);
-		// Inject one counted conflict without preprocessing this boundary probe.
-		s.conflicts ++;
-		assert(s.conflicts > uint64_t(INT_MAX));
-		assert(s.decides > uint64_t(INT_MAX));
-	}
-	{
-		Solver s{};
-		s.initialize();
-		s.restarts = INT_MAX;
-		s.restart();
-		assert(s.restarts == uint64_t(INT_MAX) + 1);
-		s.rephases = INT_MAX;
-		s.conflicts = 5;
-		s.rephase_inc = UINT64_MAX / 2 + 1;
-		s.rephase();
-		assert(s.rephases == uint64_t(INT_MAX) + 1);
-		assert(s.rephase_inc == UINT64_MAX && s.rephase_limit == UINT64_MAX);
-		s.reduce_limit = INT_MAX;
-		s.reductionRuns = INT_MAX;
-		s.reduce();
-		assert(s.reduce_limit == uint64_t(INT_MAX) + 512);
-		assert(s.reductionRuns == uint64_t(INT_MAX) + 1);
-		s.reduce_limit = UINT64_MAX - 10;
-		s.reduce();
-		assert(s.reduce_limit == UINT64_MAX);
-	}
-	{
-		Solver s{};
-		s.vars = 3;
-		s.initialize();
-		std::vector<int> a{1, 2, 3};
-		std::vector<int> b{-1, 2, 3};
-		s.clauseDB[s.add_clause(a)].lbd = 10;
-		s.clauseDB[s.add_clause(b)].lbd = 9;
-		s.deletedClauses = INT_MAX;
-		s.reduce();
-		assert(s.deletedClauses == uint64_t(INT_MAX) + 1);
-		assert(s.clauseDB.size() == 1);
-	}
-	printf( "COUNTER_AND_STAMP_REGRESSIONS_PASSED\n" );
-}
-'''
-
-LBD_UNIT = r'''#include "solver.h"
-#include <cassert>
-
-// Verify that compaction retains both watches and every assigned reason.
-static void checkClauseReferences( Solver &s ) {
-	std::vector<int> watchCount(s.clauseDB.size(), 0);
-	for ( int literal = -s.vars; literal <= s.vars; literal ++ ) {
-		if ( literal == 0 ) continue;
-		for ( const WL &watch : s.watched_literals[s.vars + literal] ) {
-			assert(watch.clauseIdx >= 0);
-			assert(watch.clauseIdx < static_cast<int>(s.clauseDB.size()));
-			const Clause &clause = s.clauseDB[watch.clauseIdx];
-			assert(clause.literals[0] == -literal || clause.literals[1] == -literal);
-			bool blockerFound = false;
-			for ( int member : clause.literals ) {
-				if ( member == watch.blocker ) blockerFound = true;
-			}
-			assert(blockerFound);
-			watchCount[watch.clauseIdx] ++;
-		}
-	}
-	for ( int count : watchCount ) assert(count == 2);
-	for ( int literal : s.trail ) {
-		const int reason = s.reason[abs(literal)];
-		if ( reason == -1 ) continue;
-		assert(reason >= 0 && reason < static_cast<int>(s.clauseDB.size()));
-		bool literalFound = false;
-		for ( int member : s.clauseDB[reason].literals ) {
-			if ( member == literal ) literalFound = true;
-		}
-		assert(literalFound);
-	}
-}
-
-// Drive conflict analysis and reduction directly; full solve is checked separately.
-static int solveReductionProbe( Solver &s ) {
-	for ( int step = 0; step < 1000; step ++ ) {
-		const int conflict = s.propagate();
-		if ( conflict >= 0 ) {
-			int backtrackLevel = 0;
-			int lbd = 0;
-			const int result = s.analyze(conflict, backtrackLevel, lbd);
-			if ( result != 0 ) return result;
-			s.backtrack(backtrackLevel);
-			if ( s.learnt.size() == 1 ) {
-				s.assign(s.learnt[0], 0, -1);
-			} else {
-				const int reason = s.add_clause(s.learnt);
-				s.clauseDB[reason].lbd = lbd;
-				s.assign(s.learnt[0], backtrackLevel, reason);
-			}
-			s.conflicts ++;
-			s.reduces ++;
-		} else if ( s.reduces >= s.reduce_limit ) {
-			s.reduce();
-		} else {
-			const int result = s.decide();
-			if ( result != 0 ) return result;
-		}
-	}
-	assert(false);
-	return 30;
-}
-
-// All assignments are forbidden, except the all-false assignment in SAT mode.
-static void solveWithEarlyReduction( bool satisfiable ) {
-	Solver s{};
-	s.vars = 5;
-	s.initialize();
-	std::vector<std::vector<int>> formula;
-	for ( int mask = 0; mask < 32; mask ++ ) {
-		if ( satisfiable && mask == 0 ) continue;
-		std::vector<int> clause;
-		for ( int variable = 1; variable <= s.vars; variable ++ ) {
-			clause.push_back((mask & (1 << (variable - 1))) ? -variable : variable);
-		}
-		formula.push_back(clause);
-		s.add_clause(clause);
-	}
-	s.origin_clauses = static_cast<int>(s.clauseDB.size());
-	// Duplicate originals are sound learnt clauses for the deletion exercise.
-	for ( int i = 0; i < 8; i ++ ) {
-		s.clauseDB[s.add_clause(formula[i])].lbd = 5;
-	}
-	s.reduce_limit = 1;
-	assert(solveReductionProbe(s) == (satisfiable ? 10 : 20));
-	assert(s.conflicts > 0 && s.reductionRuns > 0 && s.deletedClauses > 0);
-	if ( satisfiable ) {
-		for ( const std::vector<int> &clause : formula ) {
-			bool satisfied = false;
-			for ( int literal : clause ) {
-				if ( s.value[abs(literal)] == (literal > 0 ? 1 : -1) ) satisfied = true;
-			}
-			assert(satisfied);
-		}
-	}
-	checkClauseReferences(s);
-}
-
-int main() {
-	{
-		// LBD outranks activity; equal-LBD ties use activity, then clause ID.
-		Solver s{};
-		s.vars = 8;
-		s.initialize();
-		const int lbds[] = {8, 7, 6, 6, 6, 4};
-		const double activities[] = {1000.0, 0.0, 1.0, 1.0, 3.0, 2000.0};
-		for ( int i = 0; i < 6; i ++ ) {
-			std::vector<int> clause{1, 2, 3};
-			if ( i == 3 ) clause.push_back(4);
-			const int id = s.add_clause(clause);
-			s.clauseDB[id].lbd = lbds[i];
-			s.clauseDB[id].activity = activities[i];
-			assert(s.clauseDB[id].canBeDeleted);
-		}
-		s.reduce();
-		assert(s.deletedClauses == 3 && s.clauseDB.size() == 3);
-		for ( int i = 0; i < 3; i ++ ) assert(s.reduceMap[i] == -1);
-		for ( int i = 3; i < 6; i ++ ) assert(s.reduceMap[i] == i - 3);
-		checkClauseReferences(s);
-	}
-	{
-		// LBD 3 and 4 are eligible; glue clauses contribute to the half-DB window.
-		Solver s{};
-		s.vars = 4;
-		s.initialize();
-		const int lbds[] = {4, 3, 2, 2};
-		for ( int i = 0; i < 4; i ++ ) {
-			std::vector<int> clause{1, 2, 3, 4};
-			const int id = s.add_clause(clause);
-			s.clauseDB[id].lbd = lbds[i];
-			s.clauseDB[id].activity = i == 3 ? 100.0 : 0.0;
-		}
-		s.reduce();
-		assert(s.deletedClauses == 2 && s.clauseDB.size() == 2);
-		assert(s.reduceMap[0] == -1 && s.reduceMap[1] == -1);
-		assert(s.reduceMap[2] == 0 && s.reduceMap[3] == 1);
-		checkClauseReferences(s);
-	}
-	for ( int binary = 0; binary <= 1; binary ++ ) {
-		// Unlocked binary and glue clauses remain protected inside the window.
-		Solver s{};
-		s.vars = 3;
-		s.initialize();
-		for ( int i = 0; i < 2; i ++ ) {
-			std::vector<int> clause{1, 2};
-			if ( !binary ) clause.push_back(3);
-			s.clauseDB[s.add_clause(clause)].lbd = binary ? 99 : 2;
-		}
-		s.reduce();
-		assert(s.deletedClauses == 0 && s.clauseDB.size() == 2);
-		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == 1);
-		checkClauseReferences(s);
-	}
-	{
-		// Preserve every trail reason at a nonzero decision level while remapping.
-		Solver s{};
-		s.vars = 7;
-		s.initialize();
-		std::vector<std::vector<int>> clauses{
-			{-1, 2}, {-3, 4, 5}, {3, -4, 5}, {3, -1, -2},
-			{2, 4, 5}, {-3, 6}, {-6, 7}
-		};
-		const int lbds[] = {100, 9, 8, 7, 2, 99, 99};
-		for ( int i = 0; i < 7; i ++ ) {
-			s.clauseDB[s.add_clause(clauses[i])].lbd = lbds[i];
-		}
-		s.origin_clauses = 1;
-		s.assign(1, 0, -1);
-		assert(s.propagate() == -1);
-		assert(s.reason[2] == 0 && s.reason[3] == 3);
-		assert(s.reason[6] == 5 && s.reason[7] == 6);
-		s.decVarInTrail.push_back(static_cast<int>(s.trail.size()));
-		s.assign(-4, 1, -1);
-		assert(s.propagate() == -1 && s.reason[5] == 1);
-		const std::vector<int> trailBefore = s.trail;
-		const std::vector<int> decisionsBefore = s.decVarInTrail;
-		const int propagatedBefore = s.propagated;
-		s.reduce();
-		assert(s.deletedClauses == 1 && s.clauseDB.size() == 6);
-		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == 1 && s.reduceMap[2] == -1);
-		assert(s.trail == trailBefore && s.decVarInTrail == decisionsBefore);
-		assert(s.propagated == propagatedBefore && s.value[4] == -1 && s.value[5] == 1);
-		assert(s.reason[4] == -1 && s.reason[5] == 1);
-		assert(s.reason[2] == 0 && s.reason[3] == 2);
-		assert(s.reason[6] == 4 && s.reason[7] == 5);
-		checkClauseReferences(s);
-		s.backtrack(0);
-		s.assign(-4, 0, -1);
-		assert(s.propagate() == -1 && s.value[5] == 1 && s.reason[5] == 1);
-		checkClauseReferences(s);
-	}
-	{
-		// The most active ten percent survive even with the worst LBD.
-		Solver s{};
-		s.vars = 3;
-		s.initialize();
-		for ( int i = 0; i < 10; i ++ ) {
-			std::vector<int> clause{1, 2, 3};
-			const int id = s.add_clause(clause);
-			s.clauseDB[id].lbd = 20 - i;
-			s.clauseDB[id].activity = i == 0 ? 1000.0 : 1.0;
-		}
-		s.reduce();
-		assert(s.reduceMap[0] >= 0 && s.reduceMap[1] == -1);
-		assert(s.deletedClauses > 0);
-		checkClauseReferences(s);
-	}
-	{
-		// Improved clauses survive one reduction; protection extends the window.
-		Solver s{};
-		s.vars = 6;
-		s.initialize();
-		for ( int i = 0; i < 4; i ++ ) {
-			std::vector<int> clause{1, 2, 3, 4, 5, 6};
-			const int id = s.add_clause(clause);
-			s.clauseDB[id].lbd = i == 0 ? 6 : 3;
-			s.clauseDB[id].activity = 10.0 * i;
-		}
-		for ( int variable = 1; variable <= 6; variable ++ ) {
-			s.level[variable] = (variable - 1) % 3 + 1;
-		}
-		s.updateClauseQuality(0);
-		assert(s.clauseDB[0].lbd == 3 && !s.clauseDB[0].canBeDeleted);
-		assert(s.clauseDB[0].activity == 1.0 && s.clauseDB[0].useCount == 1);
-		assert(s.dynamicLBDUpdates == 1 && s.clauseActivityBumps == 1);
-		// Also reset protection on a survivor outside the deletion window.
-		s.clauseDB[3].canBeDeleted = false;
-		for ( int variable = 1; variable <= 6; variable ++ ) s.level[variable] = 0;
-		s.reduce();
-		assert(s.deletedClauses == 2 && s.clauseDB.size() == 2);
-		assert(s.reduceMap[0] == 0 && s.reduceMap[1] == -1 && s.reduceMap[2] == -1);
-		assert(s.reduceMap[3] == 1);
-		assert(s.clauseDB[0].canBeDeleted && s.clauseDB[1].canBeDeleted);
-		s.reduce();
-		assert(s.deletedClauses == 3 && s.clauseDB.size() == 1);
-		assert(s.reduceMap[0] == -1 && s.reduceMap[1] == 0);
-		checkClauseReferences(s);
-	}
-	{
-		// Protection uses pre-improvement LBD; one-level changes do not update.
-		Solver s{};
-		s.vars = 31;
-		s.initialize();
-		const int lbds[] = {30, 31, 4, 2, 0, 7};
-		for ( int i = 0; i < 6; i ++ ) {
-			std::vector<int> clause;
-			for ( int variable = 1; variable <= 31; variable ++ ) clause.push_back(variable);
-			s.clauseDB[s.add_clause(clause)].lbd = lbds[i];
-		}
-		s.origin_clauses = 1;
-		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = (variable - 1) % 3 + 1;
-		s.updateClauseQuality(-1);
-		s.updateClauseQuality(0);
-		s.updateClauseQuality(6);
-		assert(s.clauseActivityBumps == 0 && s.dynamicLBDUpdates == 0);
-		s.origin_clauses = 0;
-		for ( int i = 0; i < 5; i ++ ) s.updateClauseQuality(i);
-		assert(s.clauseDB[0].lbd == 3 && !s.clauseDB[0].canBeDeleted);
-		assert(s.clauseDB[1].lbd == 3 && s.clauseDB[1].canBeDeleted);
-		assert(s.clauseDB[2].lbd == 4 && s.clauseDB[2].canBeDeleted);
-		assert(s.clauseDB[3].lbd == 2 && s.clauseDB[3].canBeDeleted);
-		assert(s.clauseDB[4].lbd == 0 && s.clauseDB[4].canBeDeleted);
-		assert(s.dynamicLBDUpdates == 2 && s.clauseActivityBumps == 5);
-		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = 0;
-		s.updateClauseQuality(5);
-		assert(s.clauseDB[5].lbd == 7 && s.clauseDB[5].canBeDeleted);
-		for ( int variable = 1; variable <= 31; variable ++ ) s.level[variable] = 1;
-		s.updateClauseQuality(1);
-		s.updateClauseQuality(3);
-		assert(s.clauseDB[1].lbd == 1 && !s.clauseDB[1].canBeDeleted);
-		assert(s.clauseDB[3].lbd == 2);
-		assert(s.dynamicLBDUpdates == 3 && s.clauseActivityBumps == 8);
-	}
-	solveWithEarlyReduction(false);
-	solveWithEarlyReduction(true);
-	printf( "LBD_REDUCTION_REGRESSIONS_PASSED\n" );
-}
-'''
-
-PROBE = r'''#include "solver.h"
-#include <limits.h>
-int main() {
-	Solver s{};
-	s.vars = 2;
-	s.clauses = 1;
-	s.initialize();
-	std::vector<int> clause{-1, 2};
-	s.add_clause(clause);
-	s.unitPropagations = INT_MAX;
-	s.assign(1, 0, -1);
-	if ( s.propagate() != -1 ) return 2;
-	printf( "COUNT=%llu\n", (unsigned long long)s.unitPropagations );
-	return 0;
-}
-'''
-
-FAULT = r'''#include <stddef.h>
-#include <stdlib.h>
-#include <new>
-
-static long failAfter = -1;
-extern "C" void *__real__Znwm(size_t);
-extern "C" void *__real__Znam(size_t);
-static void checkAllocation() {
-	if ( failAfter == 0 ) {
-		failAfter = -1;
-		throw std::bad_alloc();
-	}
-	if ( failAfter > 0 ) failAfter --;
-}
-extern "C" void *__wrap__Znwm(size_t bytes) {
-	checkAllocation();
-	return __real__Znwm(bytes);
-}
-extern "C" void *__wrap__Znam(size_t bytes) {
-	checkAllocation();
-	return __real__Znam(bytes);
-}
-int uatuMain(int, char **);
-int main(int argc, char **argv) {
-	if ( argc != 3 ) return 2;
-	failAfter = strtol(argv[1], nullptr, 10);
-	return uatuMain(argc - 1, argv + 1);
+SAN = ['-O1', '-g', '-fsanitize=address,undefined',
+       '-fno-sanitize-recover=all', '-fno-omit-frame-pointer', '-fno-pie', '-no-pie']
+DRIVER = '''#include "solver.h"
+#include <cstdlib>
+int main( int argc, char **argv ) {
+    if ( argc != 3 ) return 1;
+    Solver solver{};
+    int result = solver.parse(argv[1]);
+    if ( result == 0 ) {
+        if ( atoi(argv[2]) != 0 ) solver.preprocessingDone = true;
+        result = solver.solve();
+    }
+    if ( result == 10 ) {
+        printf( "SATISFIABLE\\n" );
+        solver.printModel();
+    } else if ( result == 20 ) printf( "UNSATISFIABLE\\n" );
+    printf( "TEST_COUNTERS %llu %llu %llu\\n",
+        (unsigned long long)solver.conflicts,
+        (unsigned long long)solver.reductionRuns,
+        (unsigned long long)solver.restarts );
+    return result;
 }
 '''
 
 
-def command(args, **kwargs):
-    return subprocess.run([str(x) for x in args], check=True, **kwargs)
+def compile_binary(output, source, sanitize):
+    flags = SAN if sanitize else ['-O3', '-DNDEBUG']
+    sources = ['solver.cpp', 'preprocess.cpp', 'lcm.cpp']
+    # This fixture includes the preprocessing translation unit to check its bounds.
+    if source.name == 'preprocess_policy.cpp':
+        sources.remove('preprocess.cpp')
+    subprocess.run(['g++', *FLAGS, *flags, '-I', str(ROOT),
+                    *[str(ROOT / p) for p in sources],
+                    str(source), '-o', str(output)], check=True)
 
 
-def run(binary, cnf, env, limit=None, extra=()):
-    args = [str(binary), *map(str, extra), str(cnf)]
-    if limit is not None:
-        args = ['prlimit', f'--as={limit}:{limit}', '--', *args]
-    result = subprocess.run(args, env=env, text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, timeout=20)
-    text = result.stdout + result.stderr
-    assert not re.search(r'AddressSanitizer|LeakSanitizer|runtime error:', text), text[-5000:]
-    assert result.returncode in (0, 10, 20), (args, result.returncode, text[-5000:])
+def write_cnf(path, n, clauses):
+    path.write_text(f'p cnf {n} {len(clauses)}\n' + ''.join(
+        ' '.join(map(str, c)) + ' 0\n' for c in clauses))
+
+
+def brute(n, clauses):
+    return any(all(any(values[abs(lit) - 1] == (lit > 0) for lit in c)
+                   for c in clauses)
+               for values in itertools.product((False, True), repeat=n))
+
+
+def verify_model(output, n, clauses):
+    lines = output.splitlines()
+    model = list(map(int, lines[lines.index('SATISFIABLE') + 1].split()))
+    assert len(model) == n + 1 and model[-1] == 0, model
+    values = {abs(lit): lit > 0 for lit in model[:-1]}
+    assert set(values) == set(range(1, n + 1)), model
+    assert all(any(values[abs(lit)] == (lit > 0) for lit in c) for c in clauses), output
+
+
+def run(binary, cnf, env, args=()):
+    result = subprocess.run([str(binary), str(cnf), *args], env=env,
+                            text=True, capture_output=True, timeout=45)
+    output = result.stdout + result.stderr
+    assert result.returncode in (10, 20), (binary, result.returncode, output[-4000:])
+    assert not re.search(r'AddressSanitizer|LeakSanitizer|runtime error:', output), output
     return result
 
 
-def verify(result, variables, clauses, expected):
-    assert result.returncode == (10 if expected else 20), result.stdout + result.stderr
-    if expected:
-        lines = result.stdout.splitlines()
-        model = [int(x) for x in lines[lines.index('SATISFIABLE') + 1].split()]
-        assert model and model[-1] == 0
-        assignment = {}
-        for literal in model[:-1]:
-            assert 1 <= abs(literal) <= variables and abs(literal) not in assignment
-            assignment[abs(literal)] = literal > 0
-        for clause in clauses:
-            assert any(assignment.get(abs(lit)) == (lit > 0) for lit in clause), clause
-
-
-def write_cnf(path, variables, clauses):
-    path.write_text(f'p cnf {variables} {len(clauses)}\n' +
-                    ''.join(' '.join(map(str, row)) + ' 0\n' for row in clauses))
-
-
-def brute(variables, clauses):
-    for values in itertools.product((False, True), repeat=variables):
-        if all(any(values[abs(lit) - 1] == (lit > 0) for lit in row) for row in clauses):
-            return True
-    return False
-
-
-def test(work, samples, baseline, leak_checking=True):
-    env = {k: v for k, v in os.environ.items() if not k.startswith('UATU_')}
-    env.update(UATU_PRINT_MODEL='1', UATU_TIMEOUT_SEC='5',
-               ASAN_OPTIONS=f'detect_leaks={int(leak_checking)}:halt_on_error=1:abort_on_error=1',
-               UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
-    sources = [*SOLVER_SOURCES, ROOT / 'main.cpp']
-    release = work / 'release'
-    sanitized = work / 'sanitized'
-    command(['g++', *FLAGS, '-O3', '-DNDEBUG', *sources, '-o', release])
-    command(['g++', *FLAGS, *SAN, *sources, '-o', sanitized])
-    command(['g++', *FLAGS, '-O2', '-DUATU_PROFILE_BCP=1', *sources, '-o', work / 'profile'])
-    for name, source in (('unit', UNIT), ('lbd_unit', LBD_UNIT)):
-        (work / f'{name}.cpp').write_text(source)
-        command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES, work / f'{name}.cpp', '-o', work / name])
-        unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
-        assert unit.returncode == 0, unit.stdout + unit.stderr
-        print(unit.stdout, flush=True)
-
-    for name in ('minimization', 'search_control', 'vivification'):
-        command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES,
-                 ROOT / 'tests' / f'{name}.cpp', '-o', work / name])
-        unit = subprocess.run([str(work / name)], env=env, capture_output=True, text=True, timeout=20)
-        assert unit.returncode == 0, unit.stdout + unit.stderr
-        print(unit.stdout, flush=True)
-
-    cases = [(0, []), (0, [[]]), (1, [[1]]), (1, [[1], [-1]]),
-             (2, [[-1, 2], [1]]), (2, [[1, 2], [1, -2], [-1, 2], [-1, -2]])]
-    rng = random.Random(20260905)
-    for _ in range(samples):
-        n = rng.randint(3, 10)
-        clauses = []
-        for _ in range(rng.randint(2 * n, 6 * n)):
-            chosen = rng.sample(range(1, n + 1), rng.choice([2, 3, 3, 3]))
-            clauses.append([v if rng.getrandbits(1) else -v for v in chosen])
-        cases.append((n, clauses))
-    cnf = work / 'test.cnf'
-    for index, (n, clauses) in enumerate(cases):
-        write_cnf(cnf, n, clauses)
-        expected = brute(n, clauses)
-        for binary in (release, sanitized):
-            verify(run(binary, cnf, env), n, clauses, expected)
-        if index % 100 == 0:
-            print('CORRECTNESS_CASES', index, flush=True)
-
-    invalid = ['', 'c no header', 'p', 'p c', 'p cn', '1 0\n',
-               'p cnf -1 0\n', 'p cnf 2147483647 0\n',
-               'p cnf 999999999999999999999999 0\n',
-               'p cnf 1 -1\n', 'p cnf 1 1\n2 0\n',
-               'p cnf 1 1\n-2147483648 0\n', 'p cnf 1 1\nx 0\n',
-               'p cnf 1 1\n1', 'p cnf 1 2\n1 0\n',
-               'p cnf 1 0\n1 0\n', 'p cnf 1 0\np cnf 1 0\n',
-               'p cnf 1 1\n1x 0\n', 'p cnf 1 1\n+ 0\n']
-    for text in invalid:
-        cnf.write_text(text)
-        for binary in (release, sanitized):
-            result = run(binary, cnf, env)
-            assert result.returncode == 0 and 'UNSOLVED' in result.stdout
-            assert 'PARSE ERROR' in result.stderr
-    cnf.write_text('c final comment without newline\np\tcnf\t1\t1\r\n1 0\nc EOF')
-    verify(run(sanitized, cnf, env), 1, [[1]], True)
-    # Exercise refills in a comment, the header, and an integer token.
-    for padding in (65530, 65532, 65534, 65535, 65536):
-        cnf.write_text('c' + ' ' * padding + '\np cnf 1 1\n1 0')
-        verify(run(sanitized, cnf, env), 1, [[1]], True)
-
-    large = work / 'large-comment.cnf'
-    with large.open('wb') as stream:
-        stream.write(b'c')
-        for _ in range(80):
-            stream.write(b' ' * 1024**2)
-        stream.write(b'\np cnf 1 1\n1 0\n')
-    verify(run(release, large, env, 64 * 1024**2), 1, [[1]], True)
-    cnf.write_text('p cnf 1000000 1\n1 0\n')
-    limited = run(release, cnf, env, 32 * 1024**2)
-    assert limited.returncode == 0 and 'UNSOLVED' in limited.stdout
-    assert 'OUT OF MEMORY during parsing' in limited.stderr
-    print('STREAMING_AND_MEMORY_LIMIT_REGRESSIONS_PASSED', flush=True)
-
-    (work / 'fault.cpp').write_text(FAULT)
-    command(['g++', *FLAGS, *SAN, '-Dmain=uatuMain', '-c', ROOT / 'main.cpp', '-o', work / 'main.o'])
-    command(['g++', *FLAGS, *SAN, '-I', ROOT, *SOLVER_SOURCES, work / 'fault.cpp', work / 'main.o',
-             '-Wl,--wrap=_Znwm,--wrap=_Znam', '-o', work / 'fault'])
-    write_cnf(cnf, 2, [[1, 2], [1, -2], [-1, 2], [-1, -2]])
-    failures = 0
-    consecutive_solved = 0
-    stages = set()
-    for point in range(256):
-        result = run(work / 'fault', cnf, env, extra=(point,))
-        if 'OUT OF MEMORY' in result.stderr:
-            failures += 1
-            consecutive_solved = 0
-            assert result.returncode == 0 and 'UNSOLVED' in result.stdout
-            stages.add('solving' if 'during solving' in result.stderr else 'parsing')
-        else:
-            assert result.returncode == 20, result.stdout + result.stderr
-            consecutive_solved += 1
-            if consecutive_solved == 8:
-                break
-    assert stages == {'parsing', 'solving'} and consecutive_solved == 8, (stages, failures)
-    print('ALLOCATION_FAULT_INJECTION_PASSED', failures, sorted(stages), flush=True)
-
-    baseline_evidence = None
-    if baseline:
-        old = work / 'baseline'
-        old.mkdir()
-        for name in ('solver.h', 'solver.cpp', 'main.cpp'):
-            content = subprocess.check_output(['git', 'show', f'{baseline}:cpu/ver_4/{name}'], text=True)
-            (old / name).write_text(content)
-        (old / 'probe.cpp').write_text(PROBE)
-        command(['g++', *FLAGS, '-O2', '-g', '-fsanitize=undefined', '-fno-sanitize-recover=all',
-                 old / 'solver.cpp', old / 'probe.cpp', '-o', old / 'probe'])
-        probe = subprocess.run([str(old / 'probe')], env=env, capture_output=True, text=True, timeout=20)
-        assert probe.returncode != 0 and 'signed integer overflow' in probe.stderr, probe.stderr
-        command(['g++', *FLAGS, '-O2', old / 'solver.cpp', old / 'main.cpp', '-o', old / 'release'])
-        old_oom = subprocess.run(['prlimit', '--as=67108864:67108864', '--', str(old / 'release'), str(large)],
-                                 env=env, capture_output=True, text=True, timeout=20)
-        assert old_oom.returncode not in (0, 10, 20) and 'bad_alloc' in old_oom.stderr
-        baseline_evidence = {'commit': baseline, 'injected_INT_MAX_overflow_reproduced': True,
-                             'large_input_allocation_abort_reproduced': True}
-        print('BASELINE_FAILURES_REPRODUCED', flush=True)
-    summary = {'correctness_formulas_per_build': len(cases), 'correctness_builds': ['release', 'ASan+UBSan'],
-               'malformed_inputs_per_build': len(invalid), 'allocation_failure_points': failures,
-               'allocation_failure_stages': sorted(stages), 'leak_checking': leak_checking,
-               'counter_boundary_tests': 'passed; deliberately injected INT_MAX / UINT32_MAX / UINT64_MAX',
-               'minimization_tests': 'passed; recursive implication, failed-proof rollback, binary polarity, asserting literal',
-               'lbd_reduction_tests': 'passed; ranking, activity protection, dynamic LBD, nonzero-level trail/reason/watch compaction',
-               'search_control_tests': 'passed; restart blocking windows and thresholds, raw LBD, adaptive VSIDS bounds',
-               'vivification_tests': 'passed; target exclusion, implied literals, units, root reasons, repeated passes, interrupted-chain rollback',
-               'early_reduction_formulas': ['exhaustive 5-variable UNSAT', 'all-false-only 5-variable SAT'],
-               'bounded_streaming_under_64_MiB': 'passed', 'controlled_OOM_under_32_MiB': 'passed',
-               'baseline': baseline_evidence, 'all_passed': True}
-    print('REGRESSION_SUMMARY=' + json.dumps(summary, sort_keys=True), flush=True)
-    return summary
+def pigeonhole(pigeons, holes):
+    rows = [[p * holes + h + 1 for h in range(holes)] for p in range(pigeons)]
+    for h in range(holes):
+        for a in range(pigeons):
+            for b in range(a):
+                rows.append([-(a * holes + h + 1), -(b * holes + h + 1)])
+    return pigeons * holes, rows
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--samples', type=int, default=500)
-    parser.add_argument('--build-dir', type=Path)
-    parser.add_argument('--baseline')
-    parser.add_argument('--no-leak-check', action='store_true',
-                        help='disable only LeakSanitizer when process inspection is unavailable')
+    parser.add_argument('--reference', type=Path, required=True)
+    parser.add_argument('--build-dir', type=Path, required=True)
     args = parser.parse_args()
-    if args.samples < 0:
-        parser.error('--samples must be nonnegative')
-    if args.build_dir:
-        args.build_dir.mkdir(parents=True, exist_ok=True)
-        summary = test(args.build_dir.resolve(), args.samples, args.baseline, not args.no_leak_check)
-        (args.build_dir / 'regression.json').write_text(json.dumps(summary, indent=2) + '\n')
-    else:
-        with tempfile.TemporaryDirectory(prefix='uatu-regression-') as directory:
-            test(Path(directory), args.samples, args.baseline, not args.no_leak_check)
+    work = args.build_dir.resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    (work / 'driver.cpp').write_text(DRIVER)
+    env = dict(os.environ, UATU_PRINT_MODEL='1', UATU_TIMEOUT_SEC='40',
+               ASAN_OPTIONS=os.environ.get('ASAN_OPTIONS', 'detect_leaks=1:halt_on_error=1:abort_on_error=1'),
+               UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
+    binaries = []
+    for name, sanitize in [('release', False), ('sanitized', True)]:
+        binary = work / name
+        compile_binary(binary, work / 'driver.cpp', sanitize)
+        binaries.append(binary)
+    for source in sorted((ROOT / 'tests').glob('*_policy.cpp')):
+        binary = work / source.stem
+        compile_binary(binary, source, True)
+        subprocess.run([str(binary)], env=env, check=True, timeout=45)
+    cases = [(0, []), (0, [[]]), (1, [[1]]), (1, [[1], [-1]]),
+             (2, [[1, 1], [-1, 2]]), (2, [[1, -1], [-2, -2]]),
+             (3, [[1, 2], [-1, 2, 3], [-2, 3], [-3, 1]]),
+             (2, [[1, 2], [1, -2], [-1, 2], [-1, -2]])]
+    rng = random.Random(4212026)
+    for _ in range(256):
+        n = rng.randint(3, 10)
+        clauses = []
+        for _ in range(rng.randint(n, 6 * n)):
+            width = rng.choice((1, 2, 3, 3, 4))
+            row = [rng.choice((-1, 1)) * rng.randint(1, n) for _ in range(width)]
+            clauses.append(row)
+        cases.append((n, clauses))
+    small_count = len(cases)
+    for _ in range(40):
+        n = rng.randint(70, 150)
+        clauses = [[v * rng.choice((-1, 1)) for v in rng.sample(range(1, n + 1), 3)]
+                   for _ in range(int(n * rng.uniform(3.9, 4.5)))]
+        cases.append((n, clauses))
+    for holes in (4, 5, 6, 7, 8):
+        cases.append(pigeonhole(holes + 1, holes))
+    cnf = work / 'case.cnf'
+    counters = [0, 0, 0]
+    executions = 0
+    for index, (n, clauses) in enumerate(cases):
+        write_cnf(cnf, n, clauses)
+        expected = brute(n, clauses) if index < small_count else None
+        reference = run(args.reference.resolve(), cnf, env)
+        if expected is not None:
+            assert (reference.returncode == 10) == expected
+        for binary in binaries:
+            for mode in ('0', '1'):
+                result = run(binary, cnf, env, (mode,))
+                assert result.returncode == reference.returncode, (index, mode, result.stdout)
+                if result.returncode == 10:
+                    verify_model(result.stdout, n, clauses)
+                matched = re.search(r'TEST_COUNTERS (\d+) (\d+) (\d+)', result.stdout)
+                for j, value in enumerate(matched.groups()):
+                    counters[j] += int(value)
+                executions += 1
+        if index % 50 == 0:
+            print(f'Checked {index + 1}/{len(cases)} formulas', flush=True)
+    assert counters[1] > 0 and counters[2] > 0, counters
+    summary = dict(all_passed=True, seed=4212026, formulas=len(cases),
+                   exhaustive_oracle_formulas=small_count, solver_executions=executions,
+                   builds=['release', 'ASan+UBSan'], preprocessing=['enabled', 'skipped by test driver'],
+                   leak_checking='detect_leaks=0' not in env['ASAN_OPTIONS'],
+                   total_conflicts=counters[0], total_reductions=counters[1], total_restarts=counters[2],
+                   reference_commit='084d7375975408a06a1397cc4bc645a73b97fa65',
+                   policy_tests=[p.name for p in sorted((ROOT / 'tests').glob('*_policy.cpp'))])
+    files = ['solver.h', 'solver.cpp', 'preprocess.cpp', 'lcm.cpp', 'main.cpp',
+             'tests/regression.py', *['tests/' + name for name in summary['policy_tests']]]
+    summary['source_sha256'] = {
+        name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest() for name in files}
+    (work / 'regression.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(json.dumps(summary, indent=2), flush=True)
 
 
 if __name__ == '__main__':

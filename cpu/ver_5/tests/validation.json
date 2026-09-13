@@ -1,0 +1,47 @@
+{
+  "all_passed": true,
+  "seed": 4212026,
+  "formulas": 309,
+  "exhaustive_oracle_formulas": 264,
+  "solver_executions": 1236,
+  "builds": [
+    "release",
+    "ASan+UBSan"
+  ],
+  "preprocessing": [
+    "enabled",
+    "skipped by test driver"
+  ],
+  "leak_checking": false,
+  "total_conflicts": 313660,
+  "total_reductions": 42,
+  "total_restarts": 410,
+  "reference_commit": "084d7375975408a06a1397cc4bc645a73b97fa65",
+  "policy_tests": [
+    "core_policy.cpp",
+    "lcm_policy.cpp",
+    "preprocess_policy.cpp"
+  ],
+  "source_sha256": {
+    "solver.h": "29367bb7812c397f767f9c41047455a6922934fa2162d6b902f2593a855f50c3",
+    "solver.cpp": "2d1bd851e16d0ff543f4f343cb650374f77d70b8743dbe3a2f25af4eaf8bb68a",
+    "preprocess.cpp": "f5fc730fe6d016c2bad5e6e5a65ffae35f68d8b4a142294c54c35372fac7c5bd",
+    "lcm.cpp": "1a47066c59da68daaadb2321583c4aa09851af169aefa66f722a24ff24676e17",
+    "main.cpp": "0f2e7eb12361bc0eab34732ba4543d04edd431f6c76a8547d5d6850a58cdb84c",
+    "tests/regression.py": "ed7285c1896d2b0350744ed1a4bc4690cff69c9471c4ed40cdaa8d26aa6a05d7",
+    "tests/core_policy.cpp": "a1ddcff61147f3ff4bd637aa05a709850224a41aeb426c79a47fff247a986c33",
+    "tests/lcm_policy.cpp": "199d46fab876d33894ae343efc86d074d3f2fcb8534b3512dc4b96be26b10f82",
+    "tests/preprocess_policy.cpp": "433b18a6a0a01b4812d98fb256207507bc6b62b96a05d989917b114570d9c8ce"
+  },
+  "cli_build_checks": {
+    "builds": [
+      "release",
+      "profile",
+      "debug"
+    ],
+    "runs": 6,
+    "all_passed": true
+  },
+  "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0",
+  "leak_checking_note": "LeakSanitizer is unsupported under this runtime ptrace; ASan and UBSan remained enabled."
+}

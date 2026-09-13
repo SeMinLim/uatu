@@ -15,10 +15,19 @@ int main( int argc, char **argv ) {
 	int result = 30;
 	const char *stage = "parsing";
 	try {
+		printf( "----------------------------------------------------\n" );
+		printf( "[STEP 1] Reading DIMACS input...\n" );
+		fflush( stdout );
 		result = solver.parse(argv[1]);
+		printf( "[STEP 1] DIMACS input processing finished.\n" );
+		fflush( stdout );
 		if ( result == 0 ) {
 			stage = "solving";
+			printf( "[STEP 2] Preprocessing and CDCL search...\n" );
+			fflush( stdout );
 			result = solver.solve();
+			printf( "[STEP 2] Preprocessing and CDCL search finished.\n" );
+			fflush( stdout );
 		}
 	} catch ( const std::bad_alloc & ) {
 		fprintf( stderr, "c OUT OF MEMORY during %s\n", stage );
@@ -46,25 +55,16 @@ int main( int argc, char **argv ) {
 	printf( "BCP Calls            : %" PRIu64 "\n", solver.bcpFunctionCalls );
 	printf( "Restarts             : %" PRIu64 "\n", solver.restarts );
 	printf( "Blocked Restarts     : %" PRIu64 "\n", solver.blockedRestarts );
-	printf( "VSIDS Decay Updates  : %" PRIu64 "\n", solver.varDecayUpdates );
-	printf( "VSIDS Decay          : %.2f\n", solver.var_decay );
-	printf( "Rephases             : %" PRIu64 "\n", solver.rephases );
 	printf( "Clause Reductions    : %" PRIu64 "\n", solver.reductionRuns );
 	printf( "Deleted Clauses      : %" PRIu64 "\n", solver.deletedClauses );
 	printf( "Minimized Literals   : %" PRIu64 "\n", solver.minimizedLiterals );
 	printf( "Clause Activity Bumps: %" PRIu64 "\n", solver.clauseActivityBumps );
 	printf( "Dynamic LBD Updates  : %" PRIu64 "\n", solver.dynamicLBDUpdates );
-	printf( "Preprocessing Time   : %.4f\n", solver.preprocessTimeFinal );
 	printf( "Eliminated Variables : %" PRIu64 "\n", solver.preprocessingEliminated );
 	printf( "Subsumed Clauses     : %" PRIu64 "\n", solver.preprocessingSubsumed );
-	printf( "Strengthened Clauses : %" PRIu64 "\n", solver.preprocessingStrengthened );
-	printf( "BVE Resolvents       : %" PRIu64 "\n", solver.preprocessingResolvents );
-	printf( "Preprocessing Work   : %" PRIu64 "\n", solver.preprocessingWork );
-	printf( "Vivification Runs    : %" PRIu64 "\n", solver.vivificationRuns );
-	printf( "Vivification Probes  : %" PRIu64 "\n", solver.vivificationCandidates );
-	printf( "Vivified Clauses     : %" PRIu64 "\n", solver.vivifiedClauses );
-	printf( "Vivified Literals    : %" PRIu64 "\n", solver.vivifiedLiterals );
-	printf( "Vivification Stops   : %" PRIu64 "\n", solver.vivificationBudgetStops );
+	printf( "SSR Strengthenings   : %" PRIu64 "\n", solver.preprocessingStrengthened );
+	printf( "LCM Runs             : %" PRIu64 "\n", solver.lcmRuns );
+	printf( "LCM Reduced Clauses  : %" PRIu64 "\n", solver.lcmReduced );
 	printf( "Active Clauses       : %zu\n", solver.clauseDB.size() );
 	printf( "----------------------------------------------------\n" );
 	fflush( stdout );
