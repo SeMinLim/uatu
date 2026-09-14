@@ -23,6 +23,10 @@ UATU_PRINT_MODEL=1 ./obj/uatu_solver /path/to/instance.cnf
 
 **Validation:** 309 CNFs, 1,236 executions with preprocessing enabled/skipped and release/ASan+UBSan builds. All verdicts matched Glucose; all returned SAT models satisfied the original CNF. 264 cases were also checked by exhaustive enumeration. Core, preprocessing, and LCM policy tests passed, as did release/profile/debug CLI checks. [Results and source hashes](tests/validation.json).
 
+**Style-only update:** `solver.h` and `solver.cpp` now follow the project C-first style: tab indentation, K&R braces, explicit index loops, plain structs for public data, and a free BCP timing helper instead of a lambda. Heuristic logic, constants, state-update order, output, and exit codes are unchanged.
+
+**Style-equivalence validation:** A deterministic regression subset of 10 solved SAT and 10 solved UNSAT instances across 12 families was drawn from the earlier uniformly sampled 100-instance set; it is not a performance sample. Under a 1,000-second wall-clock limit, 12 GiB, and one thread per run, baseline [`dbded78`](https://github.com/SeMinLim/uatu/commit/dbded78dc2a6e7588ecdb2bc635f0e39104168ca) and the restyled solver matched verdicts and all 17 integer counters on **20/20** instances. All 20 emitted SAT models (two solvers × 10 SAT instances) satisfied the original CNFs, and **10/10** UNSAT verdicts matched published GBD statuses. Timeout, invalid model, or execution errors: **0**. [Evidence](tests/sat2025_style_equivalence_20.json).
+
 LeakSanitizer was unavailable under the test runtime's ptrace; leak detection was disabled. To rerun against a compiled Glucose 4.2.1 sequential binary:
 
 ```bash
@@ -41,5 +45,3 @@ python3 tests/regression.py --reference /path/to/glucose --build-dir /tmp/uatu-v
 100/400 Main Track instances, sampled uniformly without replacement (seed `2974165144`). **1,000 seconds wall clock, 12 GiB, one thread**, release builds with default preprocessing. Each pair ran sequentially on the same runner and pinned CPU core, with alternating order. Timing includes parsing, preprocessing, search and model output. Mean PAR-2 uses solved wall time or a **2,000-second penalty** for timeout/memory limit, divided by 100; lower is better. SAT models passed original-CNF checks; all UNSAT answers matched published GBD statuses, without proof-certificate checking. Detected wrong answers, invalid models and execution errors: **0**. [Source](https://github.com/SeMinLim/uatu/commit/11d2add23b8a2b722ad38e150478f029d8c9e6b4) · [Evidence](tests/sat2025_vs_minisat_100.json) · [Run](https://github.com/SeMinLim/uatu/actions/runs/34763218971).
 
 Matching heuristic policies does not establish equal runtime. Glucose performance parity has not been measured for this replacement. Earlier SAT Competition scores apply to [the previous revision](https://github.com/SeMinLim/uatu/blob/66cf8f1a731c3189969ae4510d833b8b06fb73ea/cpu/ver_5/README.md).
-
-Reference copyrights and license notices are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

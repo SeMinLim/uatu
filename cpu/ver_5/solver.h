@@ -24,203 +24,264 @@ struct EliminationRecord {
 
 // Heap data structure (max heap)
 class Heap {
-    	const double *activity = nullptr; // Pointer to activity database
-    	std::vector<int> heap; // Index of activity[x]
-    	std::vector<int> pos; // Actual position of heap
+	const double *activity = nullptr; // Pointer to activity database
+	std::vector<int> heap; // Index of activity[x]
+	std::vector<int> pos; // Actual position of heap
 
-	bool compare( int a, int b ) const { return activity[a] > activity[b]; }
+	bool compare( int a, int b ) const {
+		return activity[a] > activity[b];
+	}
 
-    	void up( int v ) {
-        	int x = heap[v];
+	void up( int v ) {
+		int x = heap[v];
 		int p = Parent(v);
-		// Child > Parent -> True
-        	while ( v && compare(x, heap[p]) ) {
-       			heap[v] = heap[p];
-			pos[heap[p]] = v;
-            		v = p;
-			p = Parent(p);
-        	}
-        	heap[v] = x;
-		pos[x] = v;
-    	}
 
-    	void down( int v ) {
-        	int x = heap[v];
-        	while ( v < (int)heap.size() / 2 ) {
-            		// Pick the bigger one among left and right child
+		// Child > Parent -> True
+		while ( v && compare(x, heap[p]) ) {
+			heap[v] = heap[p];
+			pos[heap[p]] = v;
+			v = p;
+			p = Parent(p);
+		}
+		heap[v] = x;
+		pos[x] = v;
+	}
+
+	void down( int v ) {
+		int x = heap[v];
+		while ( v < (int)heap.size() / 2 ) {
+			// Pick the bigger one among left and right child
 			int child = (ChildRight(v) < (int)heap.size()) &&
-				    compare(heap[ChildRight(v)], heap[ChildLeft(v)]) ?
-				    ChildRight(v) : ChildLeft(v);
-            		if ( compare(x, heap[child]) ) break;
+				compare(heap[ChildRight(v)], heap[ChildLeft(v)]) ?
+				ChildRight(v) : ChildLeft(v);
+			if ( compare(x, heap[child]) ) break;
 			else {
 				heap[v] = heap[child];
 				pos[heap[v]] = v;
 				v = child;
 			}
-        	}
-        	heap[v] = x;
+		}
+		heap[v] = x;
 		pos[x] = v;
-    	}
+	}
 
 public:
-    	void initialize( const double *s, int variables ) {
+	void initialize( const double *s, int variables ) {
 		activity = s;
 		heap.clear();
 		heap.reserve(static_cast<size_t>(variables));
 		pos.assign(static_cast<size_t>(variables) + 1, -1);
 	}
 
-    	bool empty() const { return heap.size() == 0; }
+	bool empty( void ) const {
+		return heap.size() == 0;
+	}
 
-    	bool inHeap( int n ) const { return n < (int)pos.size() && pos[n] >= 0; }
+	bool inHeap( int n ) const {
+		return n < (int)pos.size() && pos[n] >= 0;
+	}
 
-	void update( int x ) { up(pos[x]); }
+	void update( int x ) {
+		up(pos[x]);
+	}
 
-    	void insert( int x ) {
-        	if ( (int)pos.size() < x + 1 ) pos.resize(x + 1, -1);
+	void insert( int x ) {
+		if ( (int)pos.size() < x + 1 ) pos.resize(x + 1, -1);
 		pos[x] = heap.size();
-        	heap.push_back(x);
-        	up(pos[x]);
-    	}
+		heap.push_back(x);
+		up(pos[x]);
+	}
 
-    	int pop() {
-        	int x = heap[0];
-        	heap[0] = heap.back();
-        	pos[heap[0]] = 0;
+	int pop( void ) {
+		int x = heap[0];
+		heap[0] = heap.back();
+		pos[heap[0]] = 0;
 		pos[x] = -1;
-        	heap.pop_back();
-        	if ( heap.size() > 1 ) down(0);
-        	return x;
-    	}
+		heap.pop_back();
+		if ( heap.size() > 1 ) down(0);
+		return x;
+	}
 };
 
 
-// Clause
-class Clause {
-public:
+// Clause data
+struct Clause {
 	// Literal block distance based on Glucose
 	// LBD = How many decision levels are represented in a learnt clause
-    	int lbd;
+	int lbd;
 	// Usage-aware learnt-clause activity
 	double activity;
 	// The number of conflict-analysis uses
 	uint32_t useCount;
-	bool learntClause, permanent, removable, simplified, removed;
-    	// Literals in a clause
+	bool learntClause;
+	bool permanent;
+	bool removable;
+	bool simplified;
+	bool removed;
+	// Literals in a clause
 	std::vector<int> literals;
-	// Overloading array operator
+
 	// Return a certain literal in a clause
-    	int& operator [] ( int index ) { return literals[index]; }
+	int &operator [] ( int index ) {
+		return literals[index];
+	}
+
 	// Initialize clause metadata and resize literal array
-	Clause( int sz ): lbd(0), activity(0.0), useCount(0),
-		learntClause(false), permanent(false), removable(true),
-		simplified(false), removed(false) { literals.resize(sz); }
+	Clause( int sz )
+		: lbd(0), activity(0.0), useCount(0), learntClause(false), permanent(false),
+		  removable(true), simplified(false), removed(false) {
+		literals.resize(sz);
+	}
 };
 
 
-// Watcher list
-class WL {
-public:
+// Watcher data
+struct WL {
 	// Which clause a watched literal is included
-	// A index of a clause in ClauseDB
-    	int clauseIdx;
+	int clauseIdx;
 	// A flag for check whether a clause is already satisfied or not
-    	int blocker;
-    	WL(): clauseIdx(0), blocker(0) {}
-    	WL( int c, int b ): clauseIdx(c), blocker(b) {}
+	int blocker;
+
+	WL( void )
+		: clauseIdx(0), blocker(0) {
+	}
+
+	WL( int c, int b )
+		: clauseIdx(c), blocker(b) {
+	}
 };
 
 
-// Solver
-class Solver {
-public:
+// Solver state and operations
+struct Solver {
 	Solver() = default;
 	~Solver();
 	Solver( const Solver & ) = delete;
 	Solver &operator = ( const Solver & ) = delete;
 
-    	std::vector<int> learnt,                         // The literals of the learnt clause
-                         trail,                         // Save the assigned literal sequence
-                         decVarInTrail,                 // Save the decision variables' position in trail
-                         reduceMap;                     // Auxiliary data structure for clause management
-    	std::vector<Clause> clauseDB;                   // Clause database
-    	std::vector<WL> *watched_literals = nullptr;     // A mapping from literal to clauses
+	// Clause and assignment state
+	std::vector<int> learnt;
+	std::vector<int> trail;
+	std::vector<int> decVarInTrail;
+	std::vector<int> reduceMap;
+	std::vector<Clause> clauseDB;
+	std::vector<WL> *watched_literals = nullptr;
 
-	int vars = 0, clauses = 0, origin_clauses = 0;
-	// Search totals must not overflow after INT_MAX events.
-	uint64_t conflicts = 0, decides = 0, unitPropagations = 0;
+	int vars = 0;
+	int clauses = 0;
+	int origin_clauses = 0;
+
+	// Search statistics and policies
+	uint64_t conflicts = 0;
+	uint64_t decides = 0;
+	uint64_t unitPropagations = 0;
 	uint64_t bcpFunctionCalls = 0;
-	uint64_t restarts = 0, reduces = 0;
-	uint64_t firstReduceDB = 2000, nbclausesbeforereduce = 2000;
-	uint64_t curRestart = 1, incReduceDB = 300, specialIncReduceDB = 1000;
-	uint64_t conflictsRestarts = 0, noDecisionConflict = 0;
-	uint64_t learntGlue = 0, learntBinary = 0, blockedRestarts = 0;
+	uint64_t restarts = 0;
+	uint64_t reduces = 0;
+	uint64_t firstReduceDB = 2000;
+	uint64_t nbclausesbeforereduce = 2000;
+	uint64_t curRestart = 1;
+	uint64_t incReduceDB = 300;
+	uint64_t specialIncReduceDB = 1000;
+	uint64_t conflictsRestarts = 0;
+	uint64_t noDecisionConflict = 0;
+	uint64_t learntGlue = 0;
+	uint64_t learntBinary = 0;
+	uint64_t blockedRestarts = 0;
 	size_t ordinaryLearntCount = 0;
-	bool chanseokStrategy = false, glureduce = true, lubyRestart = false;
-	bool randomizeOnRestarts = false, newDescent = false, adaptStrategies = true;
-	bool performLCM = true, preprocessingDone = false;
+	bool chanseokStrategy = false;
+	bool glureduce = true;
+	bool lubyRestart = false;
+	bool randomizeOnRestarts = false;
+	bool newDescent = false;
+	bool adaptStrategies = true;
+	bool performLCM = true;
+	bool preprocessingDone = false;
 	int coLBDBound = 5;
 	uint32_t randomDescentAssignments = 0;
 	double randomSeed = 91648253;
-	int trail_queue[5000], trail_queue_size = 0, trail_queue_pos = 0;
+
+	// Restart and simplification state
+	int trail_queue[5000];
+	int trail_queue_size = 0;
+	int trail_queue_pos = 0;
 	uint64_t trailQueueSum = 0;
 	int simpDBAssigns = -1;
 	int64_t simpDBProps = 0;
-	std::vector<int> analyzeStack, analyzeToClear, lastDecisionLevel;
+	std::vector<int> analyzeStack;
+	std::vector<int> analyzeToClear;
+	std::vector<int> lastDecisionLevel;
+
+	// Preprocessing and LCM state
 	std::vector<uint8_t> eliminated;
 	std::vector<EliminationRecord> eliminationRecords;
 	std::vector<int> eliminationLiterals;
-	uint64_t preprocessingEliminated = 0, preprocessingSubsumed = 0;
-	uint64_t preprocessingStrengthened = 0, preprocessingResolvents = 0;
-	uint64_t lcmRuns = 0, lcmTested = 0, lcmReduced = 0, lcmLiteralsRemoved = 0;
+	uint64_t preprocessingEliminated = 0;
+	uint64_t preprocessingSubsumed = 0;
+	uint64_t preprocessingStrengthened = 0;
+	uint64_t preprocessingResolvents = 0;
+	uint64_t lcmRuns = 0;
+	uint64_t lcmTested = 0;
+	uint64_t lcmReduced = 0;
+	uint64_t lcmLiteralsRemoved = 0;
 	double preprocessTimeFinal = 0.0;
 	double cpuDeadline = 0.0;
+
+	// Solver counters
 	uint64_t reductionRuns = 0;
-	uint64_t deletedClauses = 0, minimizedLiterals = 0;
-	uint64_t clauseActivityBumps = 0, dynamicLBDUpdates = 0;
-    	int propagated;                                 // The number of propagated literals in trail
-    	uint32_t time_stamp;                            // Parameter for conflict analysis and LBD calculation
+	uint64_t deletedClauses = 0;
+	uint64_t minimizedLiterals = 0;
+	uint64_t clauseActivityBumps = 0;
+	uint64_t dynamicLBDUpdates = 0;
+	int propagated;
+	uint32_t time_stamp;
 
-    	int lbd_queue[50],                              // Circled queue saved the recent 50 LBDs
-            lbd_queue_size,                             // The number of LBDs in this queue
-            lbd_queue_pos;                              // The position to save the next LBD
-    	double fast_lbd_sum, slow_lbd_sum;              // Sum of the global and recent 50 LBDs
+	// LBD restart queues
+	int lbd_queue[50];
+	int lbd_queue_size;
+	int lbd_queue_pos;
+	double fast_lbd_sum;
+	double slow_lbd_sum;
 
-	int8_t *value = nullptr;                         // Current assignments
-	int8_t *forceUNSAT = nullptr;                    // Conflict-derived phases
-	int8_t *saved = nullptr;                         // Saved phases
-	int *reason = nullptr;                          // Implication clause indices
-	int *level = nullptr;                           // Decision levels
-	uint32_t *mark = nullptr;                       // Conflict-analysis stamps
-	unsigned int *lbdMark = nullptr;                // Dynamic LBD stamps
+	// Variable state
+	int8_t *value = nullptr;
+	int8_t *forceUNSAT = nullptr;
+	int8_t *saved = nullptr;
+	int *reason = nullptr;
+	int *level = nullptr;
+	uint32_t *mark = nullptr;
+	unsigned int *lbdMark = nullptr;
 	unsigned int lbdStamp;
-
-    	double *activity = nullptr;                    // The variables' score for VSIDS
+	double *activity = nullptr;
 	double max_var_decay = 0.95;
-	double var_inc, var_decay;                       // Parameter for VSIDS
-	double clause_inc, clause_decay;                 // Parameters for learnt-clause activity
-    	Heap vsids;                                    // Heap to select variable
+	double var_inc;
+	double var_decay;
+	double clause_inc;
+	double clause_decay;
+	Heap vsids;
 
-	double processTimeFinal;                         // Total elapsed time
-	double propagaTimeFinal;                         // Propagation elapsed time
-	double maxBCPTime;                               // Maximum elapsed time of BCP
+	// Timing results
+	double processTimeFinal;
+	double propagaTimeFinal;
+	double maxBCPTime;
 
+	// Solver operations
 	void nextAnalysisStamp();
-	void initialize();                                        // Allocate memory and initialize the values
-    	void assign( int literal, int level, int cref );          // Assign true value to a certain literal
-	int  add_clause( std::vector<int> &c );                   // Add new clause to clause database
-	int  propagate();                                         // BCP (Boolean Constraint Propagation)
-    	int  parse( char *filename );                             // Read CNF file
-	int  decide();                                            // Pick decision variable based on VSIDS
-	void update_score( int var, double coeff );               // Update variable activity
-	void bumpClauseActivity( int cref );                       // Update learnt-clause activity
+	void initialize();
+	void assign( int literal, int level, int cref );
+	int add_clause( std::vector<int> &c );
+	int propagate();
+	int parse( char *filename );
+	int decide();
+	void update_score( int var, double coeff );
+	void bumpClauseActivity( int cref );
 	int calculateLBD( const std::vector<int> &literals );
-	int  calculateClauseLBD( const Clause &clause );           // Calculate current LBD
-	void updateClauseQuality( int cref );                      // Update usage activity and dynamic LBD
-    	int  analyze( int cref, int &backtrack_level, int &lbd ); // Conflict analysis
-	void backtrack( int backtrack_level );                    // Backtracking
-    	void restart();                                         // Root backtrack and recent-LBD reset
-    	void reduce();                                          // Do reduce
+	int calculateClauseLBD( const Clause &clause );
+	void updateClauseQuality( int cref );
+	int analyze( int cref, int &backtrack_level, int &lbd );
+	void backtrack( int backtrack_level );
+	void restart();
+	void reduce();
 	bool withinBudget() const;
 	void clearLBDQueue();
 	void pushTrailSize();
@@ -235,9 +296,9 @@ public:
 	int preprocess();
 	bool extendModel();
 	int vivifyLearnts();
-	int  solve();                                             // Solver
-    	void printModel();                                      // Print model when the result is SAT
+	int solve();
+	void printModel();
+
 private:
 	int parseStream( FILE *file );
-
 };

@@ -11,14 +11,24 @@
 #endif
 
 
-//// Required functions
+// Required functions
 // Elapsed time checker
 static inline double timeCheckerCPU( void ) {
-        struct rusage ru;
-        getrusage(RUSAGE_SELF, &ru);
+	struct rusage ru;
+	getrusage(RUSAGE_SELF, &ru);
 
 	return (double)ru.ru_utime.tv_sec + (double)ru.ru_utime.tv_usec / 1000000;
 }
+
+#if UATU_PROFILE_BCP
+typedef std::chrono::steady_clock BcpClock;
+
+static inline void finishBCPTiming( Solver &solver, const BcpClock::time_point &start ) {
+	const double seconds = std::chrono::duration<double>(BcpClock::now() - start).count();
+	solver.propagaTimeFinal += seconds;
+	if ( seconds > solver.maxBCPTime ) solver.maxBCPTime = seconds;
+}
+#endif
 
 // Bounded DIMACS input buffering avoids retaining the whole input in memory.
 struct CNFReader {
@@ -81,7 +91,7 @@ static int invalidCNF() {
 	return 30;
 }
 
-//// Solver
+// Solver
 // Release partially initialized arrays as well as successfully parsed formulas.
 Solver::~Solver() {
 	delete[] watched_literals;
@@ -106,52 +116,52 @@ void Solver::nextAnalysisStamp() {
 
 // Allocate memory and initialize the values
 void Solver::initialize( void ) {
-        value = new int8_t[vars + 1];
-        forceUNSAT = new int8_t[vars + 1];
-        saved = new int8_t[vars + 1];
-        reason = new int[vars + 1];
-        level = new int[vars + 1];
-        mark = new uint32_t[vars + 1];
-        lbdMark = new unsigned int[vars + 1];
-        activity = new double[vars + 1];
-        watched_literals = new std::vector<WL>[vars * 2 + 1];
+	value = new int8_t[vars + 1];
+	forceUNSAT = new int8_t[vars + 1];
+	saved = new int8_t[vars + 1];
+	reason = new int[vars + 1];
+	level = new int[vars + 1];
+	mark = new uint32_t[vars + 1];
+	lbdMark = new unsigned int[vars + 1];
+	activity = new double[vars + 1];
+	watched_literals = new std::vector<WL>[vars * 2 + 1];
 
-        clauseDB.reserve(static_cast<size_t>(clauses));
-        trail.reserve(vars);
-        decVarInTrail.reserve(vars);
-        learnt.reserve(64);
+	clauseDB.reserve(static_cast<size_t>(clauses));
+	trail.reserve(vars);
+	decVarInTrail.reserve(vars);
+	learnt.reserve(64);
 
-        conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
-        restarts = reduces = 0;
-        reductionRuns = 0;
-        deletedClauses = minimizedLiterals = 0;
-        clauseActivityBumps = dynamicLBDUpdates = 0;
-        propagated = time_stamp = 0;
-        lbdStamp = 0;
-        fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
-        processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
+	conflicts = decides = unitPropagations = bcpFunctionCalls = 0;
+	restarts = reduces = 0;
+	reductionRuns = 0;
+	deletedClauses = minimizedLiterals = 0;
+	clauseActivityBumps = dynamicLBDUpdates = 0;
+	propagated = time_stamp = 0;
+	lbdStamp = 0;
+	fast_lbd_sum = lbd_queue_size = lbd_queue_pos = slow_lbd_sum = 0;
+	processTimeFinal = propagaTimeFinal = maxBCPTime = 0.0;
 
-        var_inc = 1;
-        var_decay = 0.8;
-        clause_inc = 1.0;
-        clause_decay = 0.999;
+	var_inc = 1;
+	var_decay = 0.8;
+	clause_inc = 1.0;
+	clause_decay = 0.999;
 	eliminated.assign(static_cast<size_t>(vars) + 1, 0);
 
-        vsids.initialize(activity, vars);
-        value[0] = forceUNSAT[0] = saved[0] = 0;
-        reason[0] = -1;
-        level[0] = mark[0] = 0;
-        lbdMark[0] = 0;
-        activity[0] = 0.0;
-        for ( int i = 1; i <= vars; i ++ ) {
-                value[i] = forceUNSAT[i] = 0;
+	vsids.initialize(activity, vars);
+	value[0] = forceUNSAT[0] = saved[0] = 0;
+	reason[0] = -1;
+	level[0] = mark[0] = 0;
+	lbdMark[0] = 0;
+	activity[0] = 0.0;
+	for ( int i = 1; i <= vars; i ++ ) {
+		value[i] = forceUNSAT[i] = 0;
 		saved[i] = -1;
-                reason[i] = -1;
-                level[i] = mark[i] = 0;
-                lbdMark[i] = 0;
-                activity[i] = 0.0;
-                vsids.insert(i);
-        }
+		reason[i] = -1;
+		level[i] = mark[i] = 0;
+		lbdMark[i] = 0;
+		activity[i] = 0.0;
+		vsids.insert(i);
+	}
 }
 
 // Assign 'true' value to a certain literal
@@ -160,103 +170,96 @@ void Solver::assign( int literal, int l, int cref ) {
 	// Assign 'true' if a selected literal has positive value
 	// Assign 'false' if a selected literal has negative value
 	int var = abs(literal);
-    	value[var] = literal > 0 ? 1 : -1;
-    	level[var] = l;
+	value[var] = literal > 0 ? 1 : -1;
+	level[var] = l;
 	reason[var] = cref;
-    	trail.push_back(literal);
+	trail.push_back(literal);
 }
 
 // Add a clause to the database
 int Solver::add_clause( std::vector<int> &c ) {
-    	clauseDB.push_back(Clause(c.size()));
+	clauseDB.push_back(Clause(c.size()));
 
 	int id = clauseDB.size() - 1;
-    	for ( int i = 0; i < (int)c.size(); i ++ ) clauseDB[id][i] = c[i];
+	for ( int i = 0; i < (int)c.size(); i ++ ) clauseDB[id][i] = c[i];
 
 	// Two watched literals
 	// We only make the literals 'true'
 	// Then our only concern is the opposite ones, -c[0] and -c[1]
 	// c[0] is a blocker for c[1] and vice versa
-    	WatchedLiterals(-c[0]).push_back(WL(id, c[1]));
-    	WatchedLiterals(-c[1]).push_back(WL(id, c[0]));
+	WatchedLiterals(-c[0]).push_back(WL(id, c[1]));
+	WatchedLiterals(-c[1]).push_back(WL(id, c[0]));
 
-    	return id;
+	return id;
 }
 
 // BCP (Boolean Constraint Propagation)
 int Solver::propagate( void ) {
-        ++bcpFunctionCalls;
+	bcpFunctionCalls ++;
 #if UATU_PROFILE_BCP
-        using BcpClock = std::chrono::steady_clock;
-        const auto bcpStart = BcpClock::now();
-        auto finishBcpTiming = [&]() {
-                const double seconds =
-                        std::chrono::duration<double>(BcpClock::now() - bcpStart).count();
-                propagaTimeFinal += seconds;
-                if ( seconds > maxBCPTime ) maxBCPTime = seconds;
-        };
+	const BcpClock::time_point bcpStart = BcpClock::now();
 #endif
 
-        while ( propagated < static_cast<int>(trail.size()) ) {
-                const int p = trail[propagated++];
+	while ( propagated < static_cast<int>(trail.size()) ) {
+		const int p = trail[propagated ++];
 		if ( simpDBProps > INT64_MIN ) simpDBProps --;
-                std::vector<WL> &ws = WatchedLiterals(p);
-                const int numClauses = static_cast<int>(ws.size());
-                int out = 0;
+		std::vector<WL> &ws = WatchedLiterals(p);
+		const int numClauses = static_cast<int>(ws.size());
+		int out = 0;
 
-                for ( int i = 0; i < numClauses; ) {
-                        const int blocker = ws[i].blocker;
-                        if ( Value(blocker) == 1 ) {
-                                ws[out++] = ws[i++];
-                                continue;
-                        }
+		for ( int i = 0; i < numClauses; ) {
+			const int blocker = ws[i].blocker;
+			if ( Value(blocker) == 1 ) {
+				ws[out ++] = ws[i ++];
+				continue;
+			}
 
-                        const int cref = ws[i].clauseIdx;
-                        Clause &c = clauseDB[cref];
-                        const int falseLiteral = -p;
-                        if ( c[0] == falseLiteral ) {
-                                c[0] = c[1];
-                                c[1] = falseLiteral;
-                        }
-                        ++i;
+			const int cref = ws[i].clauseIdx;
+			Clause &c = clauseDB[cref];
+			const int falseLiteral = -p;
+			if ( c[0] == falseLiteral ) {
+				c[0] = c[1];
+				c[1] = falseLiteral;
+			}
+			i ++;
 
-                        const int firstWatch = c[0];
-                        const WL watcher(cref, firstWatch);
-                        if ( Value(firstWatch) == 1 ) {
-                                ws[out++] = watcher;
-                                continue;
-                        }
+			const int firstWatch = c[0];
+			const WL watcher(cref, firstWatch);
+			if ( Value(firstWatch) == 1 ) {
+				ws[out ++] = watcher;
+				continue;
+			}
 
-                        int k = 2;
-                        const int size = static_cast<int>(c.literals.size());
-                        while ( k < size && Value(c[k]) == -1 ) ++k;
+			int k = 2;
+			const int size = static_cast<int>(c.literals.size());
+			while ( k < size && Value(c[k]) == -1 ) k ++;
 
-                        if ( k < size ) {
-                                c[1] = c[k];
-                                c[k] = falseLiteral;
-                                WatchedLiterals(-c[1]).push_back(watcher);
-                        } else {
-                                ws[out++] = watcher;
-                                if ( Value(firstWatch) == -1 ) {
-                                        while ( i < numClauses ) ws[out++] = ws[i++];
-                                        ws.resize(out);
+			if ( k < size ) {
+				c[1] = c[k];
+				c[k] = falseLiteral;
+				WatchedLiterals(-c[1]).push_back(watcher);
+			} else {
+				ws[out ++] = watcher;
+				if ( Value(firstWatch) == -1 ) {
+					while ( i < numClauses ) ws[out ++] = ws[i ++];
+					ws.resize(out);
 #if UATU_PROFILE_BCP
-                                        finishBcpTiming();
+					finishBCPTiming(*this, bcpStart);
 #endif
-                                        return cref;
-                                }
+					return cref;
+				}
 
-                                assign(firstWatch, level[abs(p)], cref);
-                                ++unitPropagations;
-                        }
-                }
-                ws.resize(out);
-        }
+				assign(firstWatch, level[abs(p)], cref);
+				unitPropagations ++;
+			}
+		}
+		ws.resize(out);
+	}
 
 #if UATU_PROFILE_BCP
-        finishBcpTiming();
+	finishBCPTiming(*this, bcpStart);
 #endif
-        return -1;
+	return -1;
 }
 
 // Read CNF file. Always close the stream, including on allocation failure.
@@ -334,7 +337,8 @@ int Solver::parseStream( FILE *file ) {
 			std::sort(buffer.begin(), buffer.end());
 			buffer.erase(std::unique(buffer.begin(), buffer.end()), buffer.end());
 			bool satisfied = false;
-			for ( int current : buffer ) {
+			for ( size_t i = 0; i < buffer.size(); i ++ ) {
+				const int current = buffer[i];
 				if ( Value(current) == 1 || (current > 0 &&
 				     std::binary_search(buffer.begin(), buffer.end(), -current)) ) {
 					satisfied = true;
@@ -343,7 +347,8 @@ int Solver::parseStream( FILE *file ) {
 			}
 			if ( !satisfied ) {
 				size_t out = 0;
-				for ( int current : buffer ) {
+				for ( size_t i = 0; i < buffer.size(); i ++ ) {
+					const int current = buffer[i];
 					if ( Value(current) != -1 ) buffer[out ++] = current;
 				}
 				buffer.resize(out);
@@ -410,7 +415,8 @@ void Solver::bumpClauseActivity( int cref ) {
 	if ( clause.useCount != UINT32_MAX ) clause.useCount ++;
 	clauseActivityBumps ++;
 	if ( clause.activity > 1e20 ) {
-		for ( Clause &other : clauseDB ) {
+		for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+			Clause &other = clauseDB[i];
 			if ( other.learntClause ) other.activity *= 1e-20;
 		}
 		clause_inc *= 1e-20;
@@ -429,7 +435,8 @@ int Solver::calculateLBD( const std::vector<int> &literals ) {
 		lbdStamp = 1;
 	}
 	int currentLBD = 0;
-	for ( int literal : literals ) {
+	for ( size_t i = 0; i < literals.size(); i ++ ) {
+		const int literal = literals[i];
 		const int decisionLevel = level[abs(literal)];
 		if ( lbdMark[decisionLevel] != lbdStamp ) {
 			lbdMark[decisionLevel] = lbdStamp;
@@ -468,7 +475,8 @@ bool Solver::literalRedundant( int literal, uint32_t abstractLevels ) {
 		analyzeStack.pop_back();
 		const int cref = reason[variable];
 		if ( cref < 0 || cref >= static_cast<int>(clauseDB.size()) ) return false;
-		for ( int other : clauseDB[cref].literals ) {
+		for ( size_t i = 0; i < clauseDB[cref].literals.size(); i ++ ) {
+			const int other = clauseDB[cref].literals[i];
 			const int otherVariable = abs(other);
 			if ( otherVariable == variable || level[otherVariable] == 0 ||
 			     mark[otherVariable] == time_stamp ) continue;
@@ -496,7 +504,8 @@ void Solver::binaryMinimization() {
 	nextAnalysisStamp();
 	for ( size_t i = 1; i < learnt.size(); i ++ ) mark[abs(learnt[i])] = time_stamp;
 	const std::vector<WL> &watchers = WatchedLiterals(-learnt[0]);
-	for ( const WL &watcher : watchers ) {
+	for ( size_t i = 0; i < watchers.size(); i ++ ) {
+		const WL &watcher = watchers[i];
 		const Clause &clause = clauseDB[watcher.clauseIdx];
 		if ( clause.removed || clause.literals.size() != 2 ) continue;
 		const int implied = watcher.blocker;
@@ -531,7 +540,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 		if ( conflict < 0 || conflict >= static_cast<int>(clauseDB.size()) ) return 30;
 		updateClauseQuality(conflict);
 		const Clause &clause = clauseDB[conflict];
-		for ( int literal : clause.literals ) {
+		for ( size_t i = 0; i < clause.literals.size(); i ++ ) {
+			const int literal = clause.literals[i];
 			const int variable = abs(literal);
 			if ( variable == abs(resolveLiteral) || mark[variable] == time_stamp ||
 			     level[variable] == 0 ) continue;
@@ -587,7 +597,8 @@ int Solver::analyze( int conflict, int &backtrackLevel, int &lbd ) {
 		std::swap(learnt[1], learnt[maxIndex]);
 		backtrackLevel = level[abs(learnt[1])];
 	}
-	for ( int variable : lastDecisionLevel ) {
+	for ( size_t i = 0; i < lastDecisionLevel.size(); i ++ ) {
+		const int variable = lastDecisionLevel[i];
 		if ( clauseDB[reason[variable]].lbd < lbd ) update_score(variable, 1.0);
 	}
 	return 0;
@@ -694,7 +705,8 @@ void Solver::compactClauses() {
 		out ++;
 	}
 	clauseDB.erase(clauseDB.begin() + out, clauseDB.end());
-	for ( int literal : trail ) {
+	for ( size_t i = 0; i < trail.size(); i ++ ) {
+		const int literal = trail[i];
 		int &cref = reason[abs(literal)];
 		if ( cref >= 0 ) cref = reduceMap[cref];
 	}
@@ -708,10 +720,12 @@ bool Solver::simplifyRoot() {
 		if ( propagate() != -1 ) return false;
 		bool changed = false;
 		bool assigned = false;
-		for ( Clause &clause : clauseDB ) {
+		for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+			Clause &clause = clauseDB[i];
 			if ( clause.removed ) continue;
 			bool satisfied = false;
-			for ( int literal : clause.literals ) {
+			for ( size_t j = 0; j < clause.literals.size(); j ++ ) {
+				const int literal = clause.literals[j];
 				if ( Value(literal) == 1 ) {
 					satisfied = true;
 					break;
@@ -723,7 +737,8 @@ bool Solver::simplifyRoot() {
 				continue;
 			}
 			size_t out = 0;
-			for ( int literal : clause.literals ) {
+			for ( size_t j = 0; j < clause.literals.size(); j ++ ) {
+				const int literal = clause.literals[j];
 				if ( Value(literal) != -1 ) clause[out ++] = literal;
 			}
 			if ( out == 0 ) return false;
@@ -742,7 +757,8 @@ bool Solver::simplifyRoot() {
 	}
 	simpDBAssigns = static_cast<int>(trail.size());
 	simpDBProps = 0;
-	for ( const Clause &clause : clauseDB ) {
+	for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+		const Clause &clause = clauseDB[i];
 		if ( clause.literals.size() <= static_cast<uint64_t>(INT64_MAX - simpDBProps) ) {
 			simpDBProps += clause.literals.size();
 		} else simpDBProps = INT64_MAX;
@@ -787,7 +803,8 @@ void Solver::reduce() {
 	reductionRuns ++;
 	reduces ++;
 	std::vector<uint8_t> locked(clauseDB.size(), 0);
-	for ( int literal : trail ) {
+	for ( size_t i = 0; i < trail.size(); i ++ ) {
+		const int literal = trail[i];
 		if ( reason[abs(literal)] >= 0 ) locked[reason[abs(literal)]] = 1;
 	}
 	std::sort(ranks.begin(), ranks.end(), lowerActivity);
@@ -852,7 +869,8 @@ void Solver::adaptSolver() {
 		conflictsRestarts = 0;
 	}
 	if ( chanseokStrategy && adjusted ) {
-		for ( Clause &clause : clauseDB ) {
+		for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+			Clause &clause = clauseDB[i];
 			if ( clause.learntClause && !clause.permanent && clause.lbd <= coLBDBound ) {
 				clause.permanent = true;
 				if ( ordinaryLearntCount > 0 ) ordinaryLearntCount --;
@@ -860,7 +878,8 @@ void Solver::adaptSolver() {
 		}
 	}
 	if ( reinitialize ) {
-		for ( Clause &clause : clauseDB ) {
+		for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+			Clause &clause = clauseDB[i];
 			if ( clause.learntClause && !clause.permanent ) clause.removed = true;
 		}
 		compactClauses();
@@ -876,7 +895,8 @@ int Solver::solve() {
 	int result = 0;
 	const double processStart = timeCheckerCPU();
 	double timeLimit = 2000.0;
-	if ( const char *env = getenv("UATU_TIMEOUT_SEC") ) {
+	const char *env = getenv("UATU_TIMEOUT_SEC");
+	if ( env != nullptr ) {
 		const double parsed = atof(env);
 		if ( parsed > 0.0 ) timeLimit = parsed;
 	}
@@ -886,7 +906,8 @@ int Solver::solve() {
 		preprocessingDone = true;
 	}
 	ordinaryLearntCount = 0;
-	for ( const Clause &clause : clauseDB ) {
+	for ( size_t i = 0; i < clauseDB.size(); i ++ ) {
+		const Clause &clause = clauseDB[i];
 		if ( clause.learntClause && !clause.permanent && !clause.removed ) ordinaryLearntCount ++;
 	}
 	bool searchEntry = true;

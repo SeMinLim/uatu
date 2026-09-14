@@ -1,0 +1,2130 @@
+{
+  "schema_version": 1,
+  "all_passed": true,
+  "validation": "style-only functional equivalence",
+  "selection": {
+    "source": "cpu/ver_5/tests/sat2025_vs_minisat_100.json",
+    "source_sha256": "1ac0018fd8f0570c1d074552d59c9e41f2a933b5ca55e36713a5d3194a54115e",
+    "source_population": "SAT Competition 2025 Main Track",
+    "method": "10 fastest validated SAT and 10 fastest known-status UNSAT instances from the previously frozen uniformly sampled 100-instance set",
+    "performance_claim": false,
+    "indices": [
+      1,
+      5,
+      14,
+      15,
+      25,
+      27,
+      32,
+      46,
+      49,
+      54,
+      68,
+      69,
+      71,
+      75,
+      77,
+      80,
+      83,
+      84,
+      91,
+      92
+    ],
+    "instances": 20,
+    "expected_outcomes": {
+      "sat": 10,
+      "unsat": 10
+    },
+    "families": 12
+  },
+  "constraints": {
+    "timeout_seconds_per_run": 1000.0,
+    "memory_limit_bytes_per_run": 12884901888,
+    "threads_per_solver": 1,
+    "paired_same_cpu": true,
+    "alternating_order": true,
+    "timing_scope": "wall time includes parsing, preprocessing, search, and model output"
+  },
+  "provenance": {
+    "baseline_commit": "dbded78dc2a6e7588ecdb2bc635f0e39104168ca",
+    "after_git_head": "dbded78dc2a6e7588ecdb2bc635f0e39104168ca",
+    "after_source_git_status": [
+      "M cpu/ver_5/solver.cpp",
+      " M cpu/ver_5/solver.h"
+    ],
+    "baseline_source_manifest": {
+      "Makefile": "27cdaf854f5e7a22215316aa4cf7bb9392030c3d8999fdf1976189c8ab9ab26b",
+      "lcm.cpp": "1a47066c59da68daaadb2321583c4aa09851af169aefa66f722a24ff24676e17",
+      "main.cpp": "0f2e7eb12361bc0eab34732ba4543d04edd431f6c76a8547d5d6850a58cdb84c",
+      "preprocess.cpp": "f5fc730fe6d016c2bad5e6e5a65ffae35f68d8b4a142294c54c35372fac7c5bd",
+      "solver.cpp": "2d1bd851e16d0ff543f4f343cb650374f77d70b8743dbe3a2f25af4eaf8bb68a",
+      "solver.h": "29367bb7812c397f767f9c41047455a6922934fa2162d6b902f2593a855f50c3",
+      "tests/core_policy.cpp": "a1ddcff61147f3ff4bd637aa05a709850224a41aeb426c79a47fff247a986c33",
+      "tests/lcm_policy.cpp": "199d46fab876d33894ae343efc86d074d3f2fcb8534b3512dc4b96be26b10f82",
+      "tests/preprocess_policy.cpp": "433b18a6a0a01b4812d98fb256207507bc6b62b96a05d989917b114570d9c8ce"
+    },
+    "baseline_source_manifest_sha256": "564acbbc02302cbdc17139f43555c8d43b034c6378e696836e66040d707a5d09",
+    "after_source_manifest": {
+      "Makefile": "27cdaf854f5e7a22215316aa4cf7bb9392030c3d8999fdf1976189c8ab9ab26b",
+      "lcm.cpp": "1a47066c59da68daaadb2321583c4aa09851af169aefa66f722a24ff24676e17",
+      "main.cpp": "0f2e7eb12361bc0eab34732ba4543d04edd431f6c76a8547d5d6850a58cdb84c",
+      "preprocess.cpp": "f5fc730fe6d016c2bad5e6e5a65ffae35f68d8b4a142294c54c35372fac7c5bd",
+      "solver.cpp": "1941bcb2651449645f94a1b63b60615fba2faf040f79d0365e49631437250035",
+      "solver.h": "394e01e9e438ff1e3513863c23af68dd875b4283da10380069dd3745fbdc8f49",
+      "tests/core_policy.cpp": "a1ddcff61147f3ff4bd637aa05a709850224a41aeb426c79a47fff247a986c33",
+      "tests/lcm_policy.cpp": "199d46fab876d33894ae343efc86d074d3f2fcb8534b3512dc4b96be26b10f82",
+      "tests/preprocess_policy.cpp": "433b18a6a0a01b4812d98fb256207507bc6b62b96a05d989917b114570d9c8ce"
+    },
+    "after_source_manifest_sha256": "325a3fc1ea9aa6d5592526fe32babf9d1861eea123ce0e0e8469a9ffb313cee5",
+    "binary_sha256": {
+      "baseline": "176c32b4fb960200a94006038fc28e9f29cb8189696e03e28321827a38330166",
+      "after": "b9ae8b37ddfdc8f5549f878aed94a1cc6fad66220c8fb2942754cc7d15f27c6c"
+    },
+    "build_command": "make release",
+    "build_logs": {
+      "baseline_sha256": "80236ea445971e355bab8cbec7d1d3ba34bf1cfe5936fe8773a6a42814bdc32d",
+      "after_sha256": "889c451c00a3e762c074486d1e7a72ccab6ca59cc576396b2bdc0eb35c80d731"
+    },
+    "checker_source_sha256": "bcb2d19f453be879e134070b85cc6b8c8854f1c5f12ceb57fb95210803beeb26",
+    "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2",
+    "checker_build_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "harness_sha256": "6a6b909b8a6da0c91b907a19e4d437a0f446308c7cb6d986b2df3038ce77c2cb",
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+    "python": "3.12.14 (main, Aug 25 2026, 14:00:49) [Clang 22.1.3 ]",
+    "compiler": "g++ (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
+  },
+  "checks": {
+    "records_complete": true,
+    "failed_indices": [],
+    "verdict_matches": 20,
+    "known_status_matches": 20,
+    "integer_counter_matches": 20,
+    "valid_sat_models": 20,
+    "normalized_sat_model_matches": 10,
+    "known_unsat_instances": 10,
+    "unsat_proof_certificates_checked": 0
+  },
+  "validation_scope": "Both SAT models were checked against every original CNF clause. UNSAT verdicts were matched to frozen published GBD statuses; no proof certificates were checked. Every integer solver counter and normalized SAT model was required to match the baseline.",
+  "records": [
+    {
+      "position": 0,
+      "source_index": 1,
+      "benchmark": {
+        "index": 1,
+        "hash": "e9f6eb5654365bb115e6d96405ea9a76",
+        "expected": "sat",
+        "filename": "crusti_g2io_250_0.2_255_12.normalised.cnf.xz",
+        "family": "argumentation",
+        "url": "https://benchmark-database.de/file/e9f6eb5654365bb115e6d96405ea9a76?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 27572956,
+        "compressed_sha256": "2dcc35554967fe3d2f6a121c31086603f3667daca7f9c1fe0a266fe6c51b1575",
+        "cnf_bytes": 289053666,
+        "cnf_sha256": "11fa68edb3346cac3685a1d4b215f89cd3bce1898e0ebbd3ec251af856a833a5"
+      },
+      "prior_uatu_wall_seconds": 81.53961538199997,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:39:53Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 286.7019925159984,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "f3c1b97661b18892c68009b5acdccf8b088000b5c3ed251640958ffde1842ac2",
+          "counters": {
+            "Conflicts": 240441,
+            "Decisions": 901773,
+            "Unit Propagations": 108097271,
+            "BCP Calls": 2618917,
+            "Restarts": 749,
+            "Blocked Restarts": 131,
+            "Clause Reductions": 17,
+            "Deleted Clauses": 212458,
+            "Minimized Literals": 7663891,
+            "Clause Activity Bumps": 970599,
+            "Dynamic LBD Updates": 99158,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 21462,
+            "Active Clauses": 13116537
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=191250 clauses=13089135\n",
+            "model_log_sha256": "f3c1b97661b18892c68009b5acdccf8b088000b5c3ed251640958ffde1842ac2",
+            "input_sha256": "11fa68edb3346cac3685a1d4b215f89cd3bce1898e0ebbd3ec251af856a833a5",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "236fb1131c0039b4a2e353e0f907b2258cd5dff087504cb6b9ade89e84d8c467"
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:44:40Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 245.87900832400192,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "949cec19d739562d2e7f9a441d1cf5f542a6c7ce6d8dd4a50b5f826fdcfe108e",
+          "counters": {
+            "Conflicts": 240441,
+            "Decisions": 901773,
+            "Unit Propagations": 108097271,
+            "BCP Calls": 2618917,
+            "Restarts": 749,
+            "Blocked Restarts": 131,
+            "Clause Reductions": 17,
+            "Deleted Clauses": 212458,
+            "Minimized Literals": 7663891,
+            "Clause Activity Bumps": 970599,
+            "Dynamic LBD Updates": 99158,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 21462,
+            "Active Clauses": 13116537
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=191250 clauses=13089135\n",
+            "model_log_sha256": "949cec19d739562d2e7f9a441d1cf5f542a6c7ce6d8dd4a50b5f826fdcfe108e",
+            "input_sha256": "11fa68edb3346cac3685a1d4b215f89cd3bce1898e0ebbd3ec251af856a833a5",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "236fb1131c0039b4a2e353e0f907b2258cd5dff087504cb6b9ade89e84d8c467"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 1,
+      "source_index": 5,
+      "benchmark": {
+        "index": 5,
+        "hash": "c21096fa2f550785c33dc862d83bc941",
+        "expected": "sat",
+        "filename": "case17.normalised.cnf.xz",
+        "family": "unknown-cases",
+        "url": "https://benchmark-database.de/file/c21096fa2f550785c33dc862d83bc941?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 9808,
+        "compressed_sha256": "c84f519571dd1884f77a9d92beba5aad9452a92c4707e48782a58ec4607d5d11",
+        "cnf_bytes": 61613,
+        "cnf_sha256": "8e35ce4c0f71d6e0dd1b130f637ac9b742b3aab9abd4f1dd236ec1be211b7834"
+      },
+      "prior_uatu_wall_seconds": 37.831711613999914,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:39:09Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 72.64073122600166,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "f555fc4bc22e548c210f7bbd798a32eded1f2a214aa346381fcd0a2ef7fb8ae1",
+          "counters": {
+            "Conflicts": 301421,
+            "Decisions": 368756,
+            "Unit Propagations": 41153000,
+            "BCP Calls": 949192,
+            "Restarts": 378,
+            "Blocked Restarts": 198,
+            "Clause Reductions": 14,
+            "Deleted Clauses": 231397,
+            "Minimized Literals": 4301320,
+            "Clause Activity Bumps": 3944519,
+            "Dynamic LBD Updates": 74864,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 880,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 14,
+            "LCM Reduced Clauses": 9916,
+            "Active Clauses": 74092
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=550 clauses=4949\n",
+            "model_log_sha256": "f555fc4bc22e548c210f7bbd798a32eded1f2a214aa346381fcd0a2ef7fb8ae1",
+            "input_sha256": "8e35ce4c0f71d6e0dd1b130f637ac9b742b3aab9abd4f1dd236ec1be211b7834",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "af9a223596123d2e639033b17b4c419e59d21d5852d6871701bddc9a43af03c9"
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:40:22Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 71.20126649799931,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "1706592e36377f13a89bc53010a0e15fef9f8b99d1ef0a7cfbf4c25e1c39a59d",
+          "counters": {
+            "Conflicts": 301421,
+            "Decisions": 368756,
+            "Unit Propagations": 41153000,
+            "BCP Calls": 949192,
+            "Restarts": 378,
+            "Blocked Restarts": 198,
+            "Clause Reductions": 14,
+            "Deleted Clauses": 231397,
+            "Minimized Literals": 4301320,
+            "Clause Activity Bumps": 3944519,
+            "Dynamic LBD Updates": 74864,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 880,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 14,
+            "LCM Reduced Clauses": 9916,
+            "Active Clauses": 74092
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=550 clauses=4949\n",
+            "model_log_sha256": "1706592e36377f13a89bc53010a0e15fef9f8b99d1ef0a7cfbf4c25e1c39a59d",
+            "input_sha256": "8e35ce4c0f71d6e0dd1b130f637ac9b742b3aab9abd4f1dd236ec1be211b7834",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "af9a223596123d2e639033b17b4c419e59d21d5852d6871701bddc9a43af03c9"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 2,
+      "source_index": 14,
+      "benchmark": {
+        "index": 14,
+        "hash": "1a936d41e3439d602c3ddcf96458a38c",
+        "expected": "unsat",
+        "filename": "arles_thres10_p10_r8185.cnf.xz",
+        "family": "p-center",
+        "url": "https://benchmark-database.de/file/1a936d41e3439d602c3ddcf96458a38c?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 25020,
+        "compressed_sha256": "78937c14cd3d0e4db7f9075eda8e591f3afde30c3a9c0bf1c457a80dc7d797b0",
+        "cnf_bytes": 386784,
+        "cnf_sha256": "2905d297cd9a8ceb4564788e35a0dcbdb4934a4df6ef26ac36b7fc03494bf20f"
+      },
+      "prior_uatu_wall_seconds": 0.006830530999991424,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:37:03Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 0.016109938998852158,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "055db91a2c531bc4c784a018e10eeccda618eab4dd72ef50541aaa4868b43cf4",
+          "counters": {
+            "Conflicts": 0,
+            "Decisions": 0,
+            "Unit Propagations": 788,
+            "BCP Calls": 1,
+            "Restarts": 0,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 0,
+            "Clause Activity Bumps": 0,
+            "Dynamic LBD Updates": 0,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 0,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 15931
+          }
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:37:03Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 0.016712763001123676,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "055db91a2c531bc4c784a018e10eeccda618eab4dd72ef50541aaa4868b43cf4",
+          "counters": {
+            "Conflicts": 0,
+            "Decisions": 0,
+            "Unit Propagations": 788,
+            "BCP Calls": 1,
+            "Restarts": 0,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 0,
+            "Clause Activity Bumps": 0,
+            "Dynamic LBD Updates": 0,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 0,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 15931
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 3,
+      "source_index": 15,
+      "benchmark": {
+        "index": 15,
+        "hash": "c569d4b2b2e90a1a70bd23a1169355ef",
+        "expected": "unsat",
+        "filename": "oddball_13_5_ttf.normalised.cnf.xz",
+        "family": "oddball-weighing",
+        "url": "https://benchmark-database.de/file/c569d4b2b2e90a1a70bd23a1169355ef?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 168360,
+        "compressed_sha256": "49a4137232f97e4d33129d5cde7be2dea94d02fecb1e00313fb251d9c6807eeb",
+        "cnf_bytes": 3318673,
+        "cnf_sha256": "1b18219ad5fe71c9db9a3d118ebeb29feae128da0c296a557d0bc2423e1ba08a"
+      },
+      "prior_uatu_wall_seconds": 124.68825159499994,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:19:24Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 240.74468166200313,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "e3dbee6e6fcf80591ccfb71edd39b0acd9d3077dcb6dc2f1279dc047c7d8bfef",
+          "counters": {
+            "Conflicts": 879890,
+            "Decisions": 1102453,
+            "Unit Propagations": 76792100,
+            "BCP Calls": 2311718,
+            "Restarts": 4131,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 45,
+            "Deleted Clauses": 817018,
+            "Minimized Literals": 28903141,
+            "Clause Activity Bumps": 4735574,
+            "Dynamic LBD Updates": 349492,
+            "Eliminated Variables": 2200,
+            "Subsumed Clauses": 6355,
+            "SSR Strengthenings": 90,
+            "LCM Runs": 46,
+            "LCM Reduced Clauses": 8128,
+            "Active Clauses": 41665
+          }
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:23:25Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 246.34311290199912,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "cd93543e2bcef9016cd4d2a614b290c41ec8eefd59bbcfea7e0623b9e0947a5d",
+          "counters": {
+            "Conflicts": 879890,
+            "Decisions": 1102453,
+            "Unit Propagations": 76792100,
+            "BCP Calls": 2311718,
+            "Restarts": 4131,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 45,
+            "Deleted Clauses": 817018,
+            "Minimized Literals": 28903141,
+            "Clause Activity Bumps": 4735574,
+            "Dynamic LBD Updates": 349492,
+            "Eliminated Variables": 2200,
+            "Subsumed Clauses": 6355,
+            "SSR Strengthenings": 90,
+            "LCM Runs": 46,
+            "LCM Reduced Clauses": 8128,
+            "Active Clauses": 41665
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 4,
+      "source_index": 25,
+      "benchmark": {
+        "index": 25,
+        "hash": "c86b261162cef181dc513963a8acb77f",
+        "expected": "sat",
+        "filename": "ITC2021_Middle_9.xml.cnf.xz",
+        "family": "scheduling",
+        "url": "https://benchmark-database.de/file/c86b261162cef181dc513963a8acb77f?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 502392,
+        "compressed_sha256": "67676a456053fa86b415235ff18e1e2d58d7a643cec8f751ed267c8a353a10b3",
+        "cnf_bytes": 4586788,
+        "cnf_sha256": "8b5bcbdbb45aff74cfacebbd01b9178d500c9a07273e2dbfec39e67a0c8f88b9"
+      },
+      "prior_uatu_wall_seconds": 13.297336199999961,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:52:15Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 20.0730257719988,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "74c8f59abb6309fb4111cb43bd7addabd23fe36567b7487a89fc49d49a49b546",
+          "counters": {
+            "Conflicts": 80984,
+            "Decisions": 1350773,
+            "Unit Propagations": 71939352,
+            "BCP Calls": 1694691,
+            "Restarts": 475,
+            "Blocked Restarts": 65,
+            "Clause Reductions": 8,
+            "Deleted Clauses": 64161,
+            "Minimized Literals": 319723,
+            "Clause Activity Bumps": 265131,
+            "Dynamic LBD Updates": 23235,
+            "Eliminated Variables": 4828,
+            "Subsumed Clauses": 7,
+            "SSR Strengthenings": 2,
+            "LCM Runs": 9,
+            "LCM Reduced Clauses": 10098,
+            "Active Clauses": 253964
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=82269 clauses=271217\n",
+            "model_log_sha256": "74c8f59abb6309fb4111cb43bd7addabd23fe36567b7487a89fc49d49a49b546",
+            "input_sha256": "8b5bcbdbb45aff74cfacebbd01b9178d500c9a07273e2dbfec39e67a0c8f88b9",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "c9836173be3c0c122cb0b2ae4626f91093aa13d5f282456b4c04b74b7d4191d9"
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:52:35Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 15.230078852000588,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "557fcf95dcd35ce2dd26bb83e1a4724c2abf0f03b1317e1cd10d84223abf59df",
+          "counters": {
+            "Conflicts": 80984,
+            "Decisions": 1350773,
+            "Unit Propagations": 71939352,
+            "BCP Calls": 1694691,
+            "Restarts": 475,
+            "Blocked Restarts": 65,
+            "Clause Reductions": 8,
+            "Deleted Clauses": 64161,
+            "Minimized Literals": 319723,
+            "Clause Activity Bumps": 265131,
+            "Dynamic LBD Updates": 23235,
+            "Eliminated Variables": 4828,
+            "Subsumed Clauses": 7,
+            "SSR Strengthenings": 2,
+            "LCM Runs": 9,
+            "LCM Reduced Clauses": 10098,
+            "Active Clauses": 253964
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=82269 clauses=271217\n",
+            "model_log_sha256": "557fcf95dcd35ce2dd26bb83e1a4724c2abf0f03b1317e1cd10d84223abf59df",
+            "input_sha256": "8b5bcbdbb45aff74cfacebbd01b9178d500c9a07273e2dbfec39e67a0c8f88b9",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "c9836173be3c0c122cb0b2ae4626f91093aa13d5f282456b4c04b74b7d4191d9"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 5,
+      "source_index": 27,
+      "benchmark": {
+        "index": 27,
+        "hash": "465c7f101b2d24de63f6a6f544faa9ee",
+        "expected": "sat",
+        "filename": "crusti_g2io_175_0.2_511_10.normalised.cnf.xz",
+        "family": "argumentation",
+        "url": "https://benchmark-database.de/file/465c7f101b2d24de63f6a6f544faa9ee?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 27865276,
+        "compressed_sha256": "18110129fc6a6637fdbfe76904def19679a7edc26539067cce538a021a62f9b3",
+        "cnf_bytes": 291458885,
+        "cnf_sha256": "f2620dbd973cb5c4c9a6517268719aad821cbe415db3cd115640965a55372ea2"
+      },
+      "prior_uatu_wall_seconds": 15.325208918000001,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:35:37Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 44.307788218000496,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "64364b444dfb4d7e158e6f674708b3f12fb12ce248f64ca38dd966c7289ee90c",
+          "counters": {
+            "Conflicts": 37961,
+            "Decisions": 839697,
+            "Unit Propagations": 25004411,
+            "BCP Calls": 1310061,
+            "Restarts": 76,
+            "Blocked Restarts": 98,
+            "Clause Reductions": 5,
+            "Deleted Clauses": 25650,
+            "Minimized Literals": 412240,
+            "Clause Activity Bumps": 125712,
+            "Dynamic LBD Updates": 14609,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 5,
+            "LCM Reduced Clauses": 6830,
+            "Active Clauses": 13017392
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=268275 clauses=13006015\n",
+            "model_log_sha256": "64364b444dfb4d7e158e6f674708b3f12fb12ce248f64ca38dd966c7289ee90c",
+            "input_sha256": "f2620dbd973cb5c4c9a6517268719aad821cbe415db3cd115640965a55372ea2",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "5ec53349a58861f00a82bfea7feb8bee9a15758111df4bba0458f6831c688aba"
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:36:21Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 32.893853096000385,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "1337d785290f044973c79b2ef1ed2d2076a06d7e7ea85e4b1ca7bf2deea1c8df",
+          "counters": {
+            "Conflicts": 37961,
+            "Decisions": 839697,
+            "Unit Propagations": 25004411,
+            "BCP Calls": 1310061,
+            "Restarts": 76,
+            "Blocked Restarts": 98,
+            "Clause Reductions": 5,
+            "Deleted Clauses": 25650,
+            "Minimized Literals": 412240,
+            "Clause Activity Bumps": 125712,
+            "Dynamic LBD Updates": 14609,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 5,
+            "LCM Reduced Clauses": 6830,
+            "Active Clauses": 13017392
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=268275 clauses=13006015\n",
+            "model_log_sha256": "1337d785290f044973c79b2ef1ed2d2076a06d7e7ea85e4b1ca7bf2deea1c8df",
+            "input_sha256": "f2620dbd973cb5c4c9a6517268719aad821cbe415db3cd115640965a55372ea2",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "5ec53349a58861f00a82bfea7feb8bee9a15758111df4bba0458f6831c688aba"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 6,
+      "source_index": 32,
+      "benchmark": {
+        "index": 32,
+        "hash": "d421913def55cb5f7302ffe9918cc153",
+        "expected": "unsat",
+        "filename": "snw_16_8_preOpt_pre.cnf.xz",
+        "family": "sorting-networks",
+        "url": "https://benchmark-database.de/file/d421913def55cb5f7302ffe9918cc153?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 3600888,
+        "compressed_sha256": "d07d7aed8ca71b9484c4b6342c4bfe09302bac1f5bd89db76b3f73651bb431f8",
+        "cnf_bytes": 48298312,
+        "cnf_sha256": "bc81f93aa47163fde3660e5b93125102359cc624b3d5303bfbad8f5720e2e001"
+      },
+      "prior_uatu_wall_seconds": 258.87811635699995,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:19:24Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 344.05045632600013,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "7fd48d11ec1854ae5f9e398dc4186a812f9d46c9ac0ab716d9b4c80dbf591325",
+          "counters": {
+            "Conflicts": 115893,
+            "Decisions": 147860,
+            "Unit Propagations": 908893244,
+            "BCP Calls": 344084,
+            "Restarts": 95,
+            "Blocked Restarts": 1486,
+            "Clause Reductions": 9,
+            "Deleted Clauses": 71692,
+            "Minimized Literals": 1412028,
+            "Clause Activity Bumps": 639426,
+            "Dynamic LBD Updates": 32071,
+            "Eliminated Variables": 116,
+            "Subsumed Clauses": 208664,
+            "SSR Strengthenings": 1266802,
+            "LCM Runs": 9,
+            "LCM Reduced Clauses": 6694,
+            "Active Clauses": 2013138
+          }
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:25:08Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 398.0109279460012,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "772dd2e0c2075e0eaaaa239e75547f491092494a5257707a6506311af432aff2",
+          "counters": {
+            "Conflicts": 115893,
+            "Decisions": 147860,
+            "Unit Propagations": 908893244,
+            "BCP Calls": 344084,
+            "Restarts": 95,
+            "Blocked Restarts": 1486,
+            "Clause Reductions": 9,
+            "Deleted Clauses": 71692,
+            "Minimized Literals": 1412028,
+            "Clause Activity Bumps": 639426,
+            "Dynamic LBD Updates": 32071,
+            "Eliminated Variables": 116,
+            "Subsumed Clauses": 208664,
+            "SSR Strengthenings": 1266802,
+            "LCM Runs": 9,
+            "LCM Reduced Clauses": 6694,
+            "Active Clauses": 2013138
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 7,
+      "source_index": 46,
+      "benchmark": {
+        "index": 46,
+        "hash": "ed9f304b537a768f462bd1c723c5396e",
+        "expected": "sat",
+        "filename": "ITC2021_Early_9.xml.cnf.xz",
+        "family": "scheduling",
+        "url": "https://benchmark-database.de/file/ed9f304b537a768f462bd1c723c5396e?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 197036,
+        "compressed_sha256": "aa0e585d15495fa2991f9681264f24ab40ff49872845ea1ddba2251b3affa1f9",
+        "cnf_bytes": 1835065,
+        "cnf_sha256": "58e5c4019f7bed6395044458752b7e87359cf7090c22bcd8b795de69a07bac44"
+      },
+      "prior_uatu_wall_seconds": 0.11888715000003458,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:37:02Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 0.16468757199982065,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "9ef98613529d87f87fb0e2c49e32a2c316aed05ac895059879eaf93845492352",
+          "counters": {
+            "Conflicts": 314,
+            "Decisions": 13611,
+            "Unit Propagations": 216372,
+            "BCP Calls": 13933,
+            "Restarts": 4,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 57,
+            "Clause Activity Bumps": 422,
+            "Dynamic LBD Updates": 13,
+            "Eliminated Variables": 1421,
+            "Subsumed Clauses": 9,
+            "SSR Strengthenings": 2,
+            "LCM Runs": 1,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 110490
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=24110 clauses=115414\n",
+            "model_log_sha256": "9ef98613529d87f87fb0e2c49e32a2c316aed05ac895059879eaf93845492352",
+            "input_sha256": "58e5c4019f7bed6395044458752b7e87359cf7090c22bcd8b795de69a07bac44",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "e73e9a8c408590ac3642473d9921f101d1f3825b71aff1c03ef74249d3ce4de2"
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:37:02Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 0.21489098699748865,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "3d587fff5184b548c11a8bfaf0481743e5c7e46216b4d6696e5c2a47cccd824a",
+          "counters": {
+            "Conflicts": 314,
+            "Decisions": 13611,
+            "Unit Propagations": 216372,
+            "BCP Calls": 13933,
+            "Restarts": 4,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 57,
+            "Clause Activity Bumps": 422,
+            "Dynamic LBD Updates": 13,
+            "Eliminated Variables": 1421,
+            "Subsumed Clauses": 9,
+            "SSR Strengthenings": 2,
+            "LCM Runs": 1,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 110490
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=24110 clauses=115414\n",
+            "model_log_sha256": "3d587fff5184b548c11a8bfaf0481743e5c7e46216b4d6696e5c2a47cccd824a",
+            "input_sha256": "58e5c4019f7bed6395044458752b7e87359cf7090c22bcd8b795de69a07bac44",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "e73e9a8c408590ac3642473d9921f101d1f3825b71aff1c03ef74249d3ce4de2"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 8,
+      "source_index": 49,
+      "benchmark": {
+        "index": 49,
+        "hash": "3197b65ef50328394a0c9e73281d7122",
+        "expected": "unsat",
+        "filename": "b20_1.cnf.xz",
+        "family": "belpyramid-puzzle",
+        "url": "https://benchmark-database.de/file/3197b65ef50328394a0c9e73281d7122?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 174992,
+        "compressed_sha256": "b43a0a2df4fadc3811458452ebfb558f68ff11411c7a7cab26538135d453f317",
+        "cnf_bytes": 963449,
+        "cnf_sha256": "82045f6bc620fb82bbac573540bf5edee55c07d6a44ad70758104b6217042d45"
+      },
+      "prior_uatu_wall_seconds": 17.42824292800003,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:34:22Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 37.616001590999076,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "a770283f477b0487cae3301553b30bef1ddbed7e1ec8cca3427ae7706785fc88",
+          "counters": {
+            "Conflicts": 367365,
+            "Decisions": 3098411,
+            "Unit Propagations": 91443247,
+            "BCP Calls": 3571599,
+            "Restarts": 1626,
+            "Blocked Restarts": 2259,
+            "Clause Reductions": 16,
+            "Deleted Clauses": 300348,
+            "Minimized Literals": 2807239,
+            "Clause Activity Bumps": 3354736,
+            "Dynamic LBD Updates": 120972,
+            "Eliminated Variables": 14710,
+            "Subsumed Clauses": 1906,
+            "SSR Strengthenings": 1009,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 12737,
+            "Active Clauses": 69167
+          }
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:34:59Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 37.30967670099926,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "30eb55268f302efadbedd62cc0a6c26ebf943cfc30db16ca9c541a92b7c3e3d0",
+          "counters": {
+            "Conflicts": 367365,
+            "Decisions": 3098411,
+            "Unit Propagations": 91443247,
+            "BCP Calls": 3571599,
+            "Restarts": 1626,
+            "Blocked Restarts": 2259,
+            "Clause Reductions": 16,
+            "Deleted Clauses": 300348,
+            "Minimized Literals": 2807239,
+            "Clause Activity Bumps": 3354736,
+            "Dynamic LBD Updates": 120972,
+            "Eliminated Variables": 14710,
+            "Subsumed Clauses": 1906,
+            "SSR Strengthenings": 1009,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 12737,
+            "Active Clauses": 69167
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 9,
+      "source_index": 54,
+      "benchmark": {
+        "index": 54,
+        "hash": "944b4eaecefa1d15c2d2a8ac0c2d1c31",
+        "expected": "unsat",
+        "filename": "b14.cnf.xz",
+        "family": "belpyramid-puzzle",
+        "url": "https://benchmark-database.de/file/944b4eaecefa1d15c2d2a8ac0c2d1c31?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 101168,
+        "compressed_sha256": "8fde16e3a46e34bf23587adcf891a1aaff445499d4edf0f2b4966fc0bffb5bdc",
+        "cnf_bytes": 516045,
+        "cnf_sha256": "b4390b24ffb133cfcd00d5db77a6e865d112521e94d63c8db1037e3556530a87"
+      },
+      "prior_uatu_wall_seconds": 8.539963263999994,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:51:33Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 25.014181304002705,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "a5ab24db89f96c76e104e5286841fcae30d4768cae69c95a32a1e1010abdd7a4",
+          "counters": {
+            "Conflicts": 265209,
+            "Decisions": 1192462,
+            "Unit Propagations": 50801586,
+            "BCP Calls": 1538796,
+            "Restarts": 526,
+            "Blocked Restarts": 1357,
+            "Clause Reductions": 14,
+            "Deleted Clauses": 200016,
+            "Minimized Literals": 3917333,
+            "Clause Activity Bumps": 2299007,
+            "Dynamic LBD Updates": 91094,
+            "Eliminated Variables": 8502,
+            "Subsumed Clauses": 941,
+            "SSR Strengthenings": 676,
+            "LCM Runs": 14,
+            "LCM Reduced Clauses": 11321,
+            "Active Clauses": 11730
+          }
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:51:58Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 26.23013052999886,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "232b69107bc93533000177b0cb64621d52250764f842784d8e155580339eccfc",
+          "counters": {
+            "Conflicts": 265209,
+            "Decisions": 1192462,
+            "Unit Propagations": 50801586,
+            "BCP Calls": 1538796,
+            "Restarts": 526,
+            "Blocked Restarts": 1357,
+            "Clause Reductions": 14,
+            "Deleted Clauses": 200016,
+            "Minimized Literals": 3917333,
+            "Clause Activity Bumps": 2299007,
+            "Dynamic LBD Updates": 91094,
+            "Eliminated Variables": 8502,
+            "Subsumed Clauses": 941,
+            "SSR Strengthenings": 676,
+            "LCM Runs": 14,
+            "LCM Reduced Clauses": 11321,
+            "Active Clauses": 11730
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 10,
+      "source_index": 68,
+      "benchmark": {
+        "index": 68,
+        "hash": "2241a1fb5bdbac0c1a3c1980ed8b332d",
+        "expected": "sat",
+        "filename": "crusti_g2io_225_0.1_31_25.normalised.cnf.xz",
+        "family": "argumentation",
+        "url": "https://benchmark-database.de/file/2241a1fb5bdbac0c1a3c1980ed8b332d?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 2177316,
+        "compressed_sha256": "7d67dcf443997b8fb218151f01593e47e6ad8b0a7d4f91dd7524ac7a7bcef5be",
+        "cnf_bytes": 18329391,
+        "cnf_sha256": "751145a8e891fb33cf886d3f3d36a07985a658b7a6b0515da97bea121977cb91"
+      },
+      "prior_uatu_wall_seconds": 77.309435495,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:34:21Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 137.4921242749988,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "d2a909276fa7a82b9b61414501f28f9bd9891fc7dc4027fdef2408e1803f24f2",
+          "counters": {
+            "Conflicts": 327427,
+            "Decisions": 504631,
+            "Unit Propagations": 136867133,
+            "BCP Calls": 1285799,
+            "Restarts": 1481,
+            "Blocked Restarts": 67,
+            "Clause Reductions": 16,
+            "Deleted Clauses": 261489,
+            "Minimized Literals": 7523164,
+            "Clause Activity Bumps": 2365324,
+            "Dynamic LBD Updates": 99187,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 19349,
+            "Active Clauses": 1026738
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=20925 clauses=960801\n",
+            "model_log_sha256": "d2a909276fa7a82b9b61414501f28f9bd9891fc7dc4027fdef2408e1803f24f2",
+            "input_sha256": "751145a8e891fb33cf886d3f3d36a07985a658b7a6b0515da97bea121977cb91",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "8a8035d64ff3725efa1acb89e99a51166bc7f1144f3aca934fb169465c06807e"
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:36:38Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 150.0894313259996,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "fe3ce98e97d9e3c65985987a267f4963b9e3d94cf32777967582e5b8e9a1dc33",
+          "counters": {
+            "Conflicts": 327427,
+            "Decisions": 504631,
+            "Unit Propagations": 136867133,
+            "BCP Calls": 1285799,
+            "Restarts": 1481,
+            "Blocked Restarts": 67,
+            "Clause Reductions": 16,
+            "Deleted Clauses": 261489,
+            "Minimized Literals": 7523164,
+            "Clause Activity Bumps": 2365324,
+            "Dynamic LBD Updates": 99187,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 19349,
+            "Active Clauses": 1026738
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=20925 clauses=960801\n",
+            "model_log_sha256": "fe3ce98e97d9e3c65985987a267f4963b9e3d94cf32777967582e5b8e9a1dc33",
+            "input_sha256": "751145a8e891fb33cf886d3f3d36a07985a658b7a6b0515da97bea121977cb91",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "8a8035d64ff3725efa1acb89e99a51166bc7f1144f3aca934fb169465c06807e"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 11,
+      "source_index": 69,
+      "benchmark": {
+        "index": 69,
+        "hash": "ad9eb96bac59319fc2f7daffd1f961f8",
+        "expected": "unsat",
+        "filename": "AProVE07-21.cnf.xz",
+        "family": "termination-analysis",
+        "url": "https://benchmark-database.de/file/ad9eb96bac59319fc2f7daffd1f961f8?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 31320,
+        "compressed_sha256": "7a8ddb3bb2216e436bad6ba6e452e011d06b12468df8281aa3ea52b4b71b7477",
+        "cnf_bytes": 167579,
+        "cnf_sha256": "bb1517606a9ef0b80fe2c4e9c69281fe32b68cf3f5fd43dcdef2d3346fe4cbba"
+      },
+      "prior_uatu_wall_seconds": 45.33690860500002,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:31:46Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 78.96900868099692,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "786a5d1a47b5eb4b5c04076d3afc7375a0f278e8d6c18a9357250bce6d6eca46",
+          "counters": {
+            "Conflicts": 424723,
+            "Decisions": 500086,
+            "Unit Propagations": 62721112,
+            "BCP Calls": 1200840,
+            "Restarts": 633,
+            "Blocked Restarts": 464,
+            "Clause Reductions": 17,
+            "Deleted Clauses": 334670,
+            "Minimized Literals": 8111312,
+            "Clause Activity Bumps": 6785607,
+            "Dynamic LBD Updates": 111079,
+            "Eliminated Variables": 1630,
+            "Subsumed Clauses": 2052,
+            "SSR Strengthenings": 963,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 19627,
+            "Active Clauses": 12829
+          }
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:33:05Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 76.6153193220016,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "c014cd3d5193440e25383578c31c26dabb834e567976c16977eb24047813337c",
+          "counters": {
+            "Conflicts": 424723,
+            "Decisions": 500086,
+            "Unit Propagations": 62721112,
+            "BCP Calls": 1200840,
+            "Restarts": 633,
+            "Blocked Restarts": 464,
+            "Clause Reductions": 17,
+            "Deleted Clauses": 334670,
+            "Minimized Literals": 8111312,
+            "Clause Activity Bumps": 6785607,
+            "Dynamic LBD Updates": 111079,
+            "Eliminated Variables": 1630,
+            "Subsumed Clauses": 2052,
+            "SSR Strengthenings": 963,
+            "LCM Runs": 17,
+            "LCM Reduced Clauses": 19627,
+            "Active Clauses": 12829
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 12,
+      "source_index": 71,
+      "benchmark": {
+        "index": 71,
+        "hash": "695d8f6a2ee6e89e5a4f5d94abc3aca6",
+        "expected": "sat",
+        "filename": "x9-07092.sat.sanitized.cnf.xz",
+        "family": "hamiltonian",
+        "url": "https://benchmark-database.de/file/695d8f6a2ee6e89e5a4f5d94abc3aca6?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 6628,
+        "compressed_sha256": "1c49c1f69a5a348ef3299ecb5f999e6faae4e22c4f87d2ddb2ce0508d824a6b5",
+        "cnf_bytes": 38353,
+        "cnf_sha256": "eb9a4740b712b149f08d5b430ae5907109eac3f231ce549a281703bc8e0965fb"
+      },
+      "prior_uatu_wall_seconds": 0.7755094280000208,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:37:00Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 1.0948341660005099,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "0124b8f5ed1bd943819f2a0f012c2440e2273489a2df4a9a975d8890a79f64ab",
+          "counters": {
+            "Conflicts": 14593,
+            "Decisions": 18503,
+            "Unit Propagations": 1597252,
+            "BCP Calls": 79855,
+            "Restarts": 4,
+            "Blocked Restarts": 2,
+            "Clause Reductions": 3,
+            "Deleted Clauses": 8798,
+            "Minimized Literals": 97197,
+            "Clause Activity Bumps": 107272,
+            "Dynamic LBD Updates": 4515,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 560,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 3,
+            "LCM Reduced Clauses": 1914,
+            "Active Clauses": 8382
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=350 clauses=3147\n",
+            "model_log_sha256": "0124b8f5ed1bd943819f2a0f012c2440e2273489a2df4a9a975d8890a79f64ab",
+            "input_sha256": "eb9a4740b712b149f08d5b430ae5907109eac3f231ce549a281703bc8e0965fb",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "fe40f45d9a5806820297830b2759f9bfe16a5f331aada5433de630524c55702e"
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:37:01Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 1.0195904790016357,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "d833fcc9736f11ae17e180071b2aad7c44147a5fbcdbef13b913f70fa4822d49",
+          "counters": {
+            "Conflicts": 14593,
+            "Decisions": 18503,
+            "Unit Propagations": 1597252,
+            "BCP Calls": 79855,
+            "Restarts": 4,
+            "Blocked Restarts": 2,
+            "Clause Reductions": 3,
+            "Deleted Clauses": 8798,
+            "Minimized Literals": 97197,
+            "Clause Activity Bumps": 107272,
+            "Dynamic LBD Updates": 4515,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 560,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 3,
+            "LCM Reduced Clauses": 1914,
+            "Active Clauses": 8382
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=350 clauses=3147\n",
+            "model_log_sha256": "d833fcc9736f11ae17e180071b2aad7c44147a5fbcdbef13b913f70fa4822d49",
+            "input_sha256": "eb9a4740b712b149f08d5b430ae5907109eac3f231ce549a281703bc8e0965fb",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "fe40f45d9a5806820297830b2759f9bfe16a5f331aada5433de630524c55702e"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 13,
+      "source_index": 75,
+      "benchmark": {
+        "index": 75,
+        "hash": "7a5e9bdbf9b8c025b1f986d6098b6206",
+        "expected": "sat",
+        "filename": "cfi-rigid-t2-0048-04-or_3_shuffle_all.cnf.xz",
+        "family": "graph-isomorphism",
+        "url": "https://benchmark-database.de/file/7a5e9bdbf9b8c025b1f986d6098b6206?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 45091212,
+        "compressed_sha256": "ae978a0ab50abedec524fa74b99c26cd868abc24355d6ab0b63b7b34937eaec3",
+        "cnf_bytes": 140860140,
+        "cnf_sha256": "332c95c2f288c362367db27eef330cbb74b9d494429b16bd21e49afa1f230377"
+      },
+      "prior_uatu_wall_seconds": 101.10094538399994,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:27:31Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 224.6011345879997,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "f35916c4619a5c31c7d0097f7456c78020ac538369b8529eecb6d7971b3a1b3b",
+          "counters": {
+            "Conflicts": 155108,
+            "Decisions": 1939162,
+            "Unit Propagations": 229650035,
+            "BCP Calls": 3668475,
+            "Restarts": 1213,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 10,
+            "Deleted Clauses": 113884,
+            "Minimized Literals": 5254643,
+            "Clause Activity Bumps": 537662,
+            "Dynamic LBD Updates": 49625,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 11,
+            "LCM Reduced Clauses": 17198,
+            "Active Clauses": 11119489
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=6912 clauses=11099040\n",
+            "model_log_sha256": "f35916c4619a5c31c7d0097f7456c78020ac538369b8529eecb6d7971b3a1b3b",
+            "input_sha256": "332c95c2f288c362367db27eef330cbb74b9d494429b16bd21e49afa1f230377",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "50aaee58b89b6eaf5512b50c5b57b458f0c885caecff4d0ad32e1a6a3e141271"
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:31:16Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 182.12107009800093,
+          "cpu_affinity": 3,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "5cab9c2f62521106885549efe721fe23f0389d75c77fd459a09ffd30eaa06b48",
+          "counters": {
+            "Conflicts": 155108,
+            "Decisions": 1939162,
+            "Unit Propagations": 229650035,
+            "BCP Calls": 3668475,
+            "Restarts": 1213,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 10,
+            "Deleted Clauses": 113884,
+            "Minimized Literals": 5254643,
+            "Clause Activity Bumps": 537662,
+            "Dynamic LBD Updates": 49625,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 11,
+            "LCM Reduced Clauses": 17198,
+            "Active Clauses": 11119489
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=6912 clauses=11099040\n",
+            "model_log_sha256": "5cab9c2f62521106885549efe721fe23f0389d75c77fd459a09ffd30eaa06b48",
+            "input_sha256": "332c95c2f288c362367db27eef330cbb74b9d494429b16bd21e49afa1f230377",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "50aaee58b89b6eaf5512b50c5b57b458f0c885caecff4d0ad32e1a6a3e141271"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 14,
+      "source_index": 77,
+      "benchmark": {
+        "index": 77,
+        "hash": "51482a5b06b055edfdca576d654ce191",
+        "expected": "unsat",
+        "filename": "bob12s09-opt.cnf.xz",
+        "family": "hardware-model-checking",
+        "url": "https://benchmark-database.de/file/51482a5b06b055edfdca576d654ce191?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 414416,
+        "compressed_sha256": "bec3284f6db304502fc90d515777ff4a2fb0d3698098f65a205a6b06408f9ec9",
+        "cnf_bytes": 2505718,
+        "cnf_sha256": "6598c85169bf89b7477d1e94a82c3264d0e6136c150fab7de647b9d60f9b96de"
+      },
+      "prior_uatu_wall_seconds": 161.22416988999998,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:19:24Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 477.1010094850026,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "f4421a7d7992d61fc448928fe50973424b7809b7266e8a2357a7fd18f798da3c",
+          "counters": {
+            "Conflicts": 904201,
+            "Decisions": 1555961,
+            "Unit Propagations": 595491129,
+            "BCP Calls": 2752522,
+            "Restarts": 3055,
+            "Blocked Restarts": 1102,
+            "Clause Reductions": 26,
+            "Deleted Clauses": 767513,
+            "Minimized Literals": 28603829,
+            "Clause Activity Bumps": 15913279,
+            "Dynamic LBD Updates": 242184,
+            "Eliminated Variables": 36386,
+            "Subsumed Clauses": 6711,
+            "SSR Strengthenings": 5608,
+            "LCM Runs": 26,
+            "LCM Reduced Clauses": 26644,
+            "Active Clauses": 76772
+          }
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:27:21Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 526.8107837390016,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "cf371fca473044cb65e2241b43a4f29d4ad55dc68c498cb5ff7d3b6abc1726ca",
+          "counters": {
+            "Conflicts": 904201,
+            "Decisions": 1555961,
+            "Unit Propagations": 595491129,
+            "BCP Calls": 2752522,
+            "Restarts": 3055,
+            "Blocked Restarts": 1102,
+            "Clause Reductions": 26,
+            "Deleted Clauses": 767513,
+            "Minimized Literals": 28603829,
+            "Clause Activity Bumps": 15913279,
+            "Dynamic LBD Updates": 242184,
+            "Eliminated Variables": 36386,
+            "Subsumed Clauses": 6711,
+            "SSR Strengthenings": 5608,
+            "LCM Runs": 26,
+            "LCM Reduced Clauses": 26644,
+            "Active Clauses": 76772
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 15,
+      "source_index": 80,
+      "benchmark": {
+        "index": 80,
+        "hash": "0ed8c06438673f179985a79b9d6a9fe4",
+        "expected": "unsat",
+        "filename": "cfi-rigid-s2-0064-04-or_2_shuffle_all.cnf.xz",
+        "family": "graph-isomorphism",
+        "url": "https://benchmark-database.de/file/0ed8c06438673f179985a79b9d6a9fe4?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 62056920,
+        "compressed_sha256": "a03e17c57b618b0e644482d7941b8082b838c600b3ef7d48f4a9c1e4f2fb6905",
+        "cnf_bytes": 191470778,
+        "cnf_sha256": "7f0930ded4fc4d1e1d93825b075117ae09b81074baaa785f67640d0b4958840e"
+      },
+      "prior_uatu_wall_seconds": 211.23457006800004,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:19:24Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 614.2831806950016,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "1a89b15bad5dff1d226f4a254e1c76ac7bb6a5c84a4fd8f5df04a0acd493fec5",
+          "counters": {
+            "Conflicts": 215951,
+            "Decisions": 1514980,
+            "Unit Propagations": 420773640,
+            "BCP Calls": 3480481,
+            "Restarts": 954,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 12,
+            "Deleted Clauses": 167601,
+            "Minimized Literals": 18487310,
+            "Clause Activity Bumps": 971295,
+            "Dynamic LBD Updates": 107603,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 13,
+            "LCM Reduced Clauses": 21452,
+            "Active Clauses": 15068210
+          }
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:29:39Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 614.5932054610021,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "c5d144c29c8ec546093e41940ba2f95f121e0b1dbc088f1c473be4801ec03c58",
+          "counters": {
+            "Conflicts": 215951,
+            "Decisions": 1514980,
+            "Unit Propagations": 420773640,
+            "BCP Calls": 3480481,
+            "Restarts": 954,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 12,
+            "Deleted Clauses": 167601,
+            "Minimized Literals": 18487310,
+            "Clause Activity Bumps": 971295,
+            "Dynamic LBD Updates": 107603,
+            "Eliminated Variables": 0,
+            "Subsumed Clauses": 0,
+            "SSR Strengthenings": 0,
+            "LCM Runs": 13,
+            "LCM Reduced Clauses": 21452,
+            "Active Clauses": 15068210
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 16,
+      "source_index": 83,
+      "benchmark": {
+        "index": 83,
+        "hash": "8f391f2bf8167f1b96467f3479b33dc5",
+        "expected": "unsat",
+        "filename": "oddball_20_5_ttf.normalised.cnf.xz",
+        "family": "oddball-weighing",
+        "url": "https://benchmark-database.de/file/8f391f2bf8167f1b96467f3479b33dc5?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 218488,
+        "compressed_sha256": "4d1dea5ca2efde89744c547b69990148c6e0fa3e247ba5f78f82c085697c7ff9",
+        "cnf_bytes": 8191823,
+        "cnf_sha256": "2f23038727e67a9c3179d8a2bad23fe56e2e5a2952c79b84f42ed4f61df4654a"
+      },
+      "prior_uatu_wall_seconds": 69.52535551100004,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:44:16Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 245.90231566700095,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "05d40421346cae4150c57ecc38054fe5e0160f1169c881189067c4be5d2e20ab",
+          "counters": {
+            "Conflicts": 715011,
+            "Decisions": 887896,
+            "Unit Propagations": 119845506,
+            "BCP Calls": 1954114,
+            "Restarts": 3003,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 37,
+            "Deleted Clauses": 648915,
+            "Minimized Literals": 22430602,
+            "Clause Activity Bumps": 3926045,
+            "Dynamic LBD Updates": 299677,
+            "Eliminated Variables": 3675,
+            "Subsumed Clauses": 24893,
+            "SSR Strengthenings": 430,
+            "LCM Runs": 38,
+            "LCM Reduced Clauses": 8229,
+            "Active Clauses": 46226
+          }
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:48:22Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 233.58830937200037,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "1f9b2cdd9333cc57c506c27a3a7fa45f448e596f35727a5b1b86c92b49cf9e6c",
+          "counters": {
+            "Conflicts": 715011,
+            "Decisions": 887896,
+            "Unit Propagations": 119845506,
+            "BCP Calls": 1954114,
+            "Restarts": 3003,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 37,
+            "Deleted Clauses": 648915,
+            "Minimized Literals": 22430602,
+            "Clause Activity Bumps": 3926045,
+            "Dynamic LBD Updates": 299677,
+            "Eliminated Variables": 3675,
+            "Subsumed Clauses": 24893,
+            "SSR Strengthenings": 430,
+            "LCM Runs": 38,
+            "LCM Reduced Clauses": 8229,
+            "Active Clauses": 46226
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    },
+    {
+      "position": 17,
+      "source_index": 84,
+      "benchmark": {
+        "index": 84,
+        "hash": "90bec6dcf2399d7c7f73acba44a8641e",
+        "expected": "sat",
+        "filename": "Wallace_Bits_Fast_8.cnf.cnf.xz",
+        "family": "multiplier-circuits",
+        "url": "https://benchmark-database.de/file/90bec6dcf2399d7c7f73acba44a8641e?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 100080,
+        "compressed_sha256": "929eb74f0adbb4073c572e7bcf3bb18a57d512f35dd7f750a67483c30d119a02",
+        "cnf_bytes": 1152327,
+        "cnf_sha256": "c20ea0635d0d4859123436fd529bf13d1a1e4a6c44969bc6eff68975f04c29a0"
+      },
+      "prior_uatu_wall_seconds": 0.07393419499999254,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:37:02Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 0.2189127070014365,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "bd0c812865b3c886bcdbcb998e7446349caad9d951b7fbf82bdb3fef64a4571f",
+          "counters": {
+            "Conflicts": 267,
+            "Decisions": 1694,
+            "Unit Propagations": 309677,
+            "BCP Calls": 4062,
+            "Restarts": 1,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 3909,
+            "Clause Activity Bumps": 651,
+            "Dynamic LBD Updates": 65,
+            "Eliminated Variables": 5534,
+            "Subsumed Clauses": 18099,
+            "SSR Strengthenings": 26520,
+            "LCM Runs": 1,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 37692
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=15479 clauses=61596\n",
+            "model_log_sha256": "bd0c812865b3c886bcdbcb998e7446349caad9d951b7fbf82bdb3fef64a4571f",
+            "input_sha256": "c20ea0635d0d4859123436fd529bf13d1a1e4a6c44969bc6eff68975f04c29a0",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "f3d010facc028f68e650f93b2f18381f9a817ff841d0dea6120dabffe31ed68c"
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:37:02Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 0.16576876000181073,
+          "cpu_affinity": 0,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "d43d26ba8b38fb9eec46ff80ae68a6e7dc6ad946f2fbf787562e311619d35718",
+          "counters": {
+            "Conflicts": 267,
+            "Decisions": 1694,
+            "Unit Propagations": 309677,
+            "BCP Calls": 4062,
+            "Restarts": 1,
+            "Blocked Restarts": 0,
+            "Clause Reductions": 0,
+            "Deleted Clauses": 0,
+            "Minimized Literals": 3909,
+            "Clause Activity Bumps": 651,
+            "Dynamic LBD Updates": 65,
+            "Eliminated Variables": 5534,
+            "Subsumed Clauses": 18099,
+            "SSR Strengthenings": 26520,
+            "LCM Runs": 1,
+            "LCM Reduced Clauses": 0,
+            "Active Clauses": 37692
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=15479 clauses=61596\n",
+            "model_log_sha256": "d43d26ba8b38fb9eec46ff80ae68a6e7dc6ad946f2fbf787562e311619d35718",
+            "input_sha256": "c20ea0635d0d4859123436fd529bf13d1a1e4a6c44969bc6eff68975f04c29a0",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "f3d010facc028f68e650f93b2f18381f9a817ff841d0dea6120dabffe31ed68c"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 18,
+      "source_index": 91,
+      "benchmark": {
+        "index": 91,
+        "hash": "77bfac6b280653e63013f77d0991484e",
+        "expected": "sat",
+        "filename": "case19.normalised.cnf.xz",
+        "family": "unknown-cases",
+        "url": "https://benchmark-database.de/file/77bfac6b280653e63013f77d0991484e?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 34453384,
+        "compressed_sha256": "53bc1f769fdca7e57f00de3a46dd2d1b596ee19d28eb8413dc5482f8510b8b3f",
+        "cnf_bytes": 102777603,
+        "cnf_sha256": "78a9eb6458f6fec37a8a2777d567ec9264c3672f572d8219724dd6344942a188"
+      },
+      "prior_uatu_wall_seconds": 94.65940155500004,
+      "run_order": [
+        "baseline",
+        "after"
+      ],
+      "runs": {
+        "baseline": {
+          "started_utc": "2026-09-14T10:36:08Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 244.63781519000258,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "aeb4d30baefd77c5d97f8e9a585880727909eceb2010bc1f3f8b025471e23152",
+          "counters": {
+            "Conflicts": 11090,
+            "Decisions": 182340,
+            "Unit Propagations": 26665635,
+            "BCP Calls": 220882,
+            "Restarts": 62,
+            "Blocked Restarts": 4,
+            "Clause Reductions": 2,
+            "Deleted Clauses": 3785,
+            "Minimized Literals": 130315,
+            "Clause Activity Bumps": 33950,
+            "Dynamic LBD Updates": 4046,
+            "Eliminated Variables": 60312,
+            "Subsumed Clauses": 5720,
+            "SSR Strengthenings": 88840,
+            "LCM Runs": 3,
+            "LCM Reduced Clauses": 437,
+            "Active Clauses": 4562050
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=138711 clauses=4688613\n",
+            "model_log_sha256": "aeb4d30baefd77c5d97f8e9a585880727909eceb2010bc1f3f8b025471e23152",
+            "input_sha256": "78a9eb6458f6fec37a8a2777d567ec9264c3672f572d8219724dd6344942a188",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "e1e2448a5136cfa41bd02bb51f9b68f04742f77a0d0837341ca355ef6ca8ef7a"
+        },
+        "after": {
+          "started_utc": "2026-09-14T10:40:13Z",
+          "outcome": "sat",
+          "returncode": 10,
+          "external_timeout": false,
+          "wall_seconds": 241.00394279600005,
+          "cpu_affinity": 2,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "2fef9bc11ab8137fd390f129e13d1138c6676e3dc1694aeea5dc096107e5b91c",
+          "counters": {
+            "Conflicts": 11090,
+            "Decisions": 182340,
+            "Unit Propagations": 26665635,
+            "BCP Calls": 220882,
+            "Restarts": 62,
+            "Blocked Restarts": 4,
+            "Clause Reductions": 2,
+            "Deleted Clauses": 3785,
+            "Minimized Literals": 130315,
+            "Clause Activity Bumps": 33950,
+            "Dynamic LBD Updates": 4046,
+            "Eliminated Variables": 60312,
+            "Subsumed Clauses": 5720,
+            "SSR Strengthenings": 88840,
+            "LCM Runs": 3,
+            "LCM Reduced Clauses": 437,
+            "Active Clauses": 4562050
+          },
+          "model_check": {
+            "returncode": 0,
+            "output": "VALID: vars=138711 clauses=4688613\n",
+            "model_log_sha256": "2fef9bc11ab8137fd390f129e13d1138c6676e3dc1694aeea5dc096107e5b91c",
+            "input_sha256": "78a9eb6458f6fec37a8a2777d567ec9264c3672f572d8219724dd6344942a188",
+            "checker_binary_sha256": "2ce684f96c30a8866439f9541b8fb6522beb204abdd5665e46ed8a2ec765f9f2"
+          },
+          "normalized_model_sha256": "e1e2448a5136cfa41bd02bb51f9b68f04742f77a0d0837341ca355ef6ca8ef7a"
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "both_sat_models_valid": true,
+        "normalized_models_match": true
+      },
+      "passed": true
+    },
+    {
+      "position": 19,
+      "source_index": 92,
+      "benchmark": {
+        "index": 92,
+        "hash": "47f5872181a581dff34eb33123fe3242",
+        "expected": "unsat",
+        "filename": "b17.cnf.xz",
+        "family": "belpyramid-puzzle",
+        "url": "https://benchmark-database.de/file/47f5872181a581dff34eb33123fe3242?context=cnf"
+      },
+      "input": {
+        "compressed_bytes": 478684,
+        "compressed_sha256": "fe5b888c4b37dde398657f7c6f7adbd4e6b84c697f2712d23767db975189e15e",
+        "cnf_bytes": 2688749,
+        "cnf_sha256": "910171697fa9101d22b0ad6867f957f56231dd50e4e5c07edddfcfee6d657e38"
+      },
+      "prior_uatu_wall_seconds": 39.81207996200001,
+      "run_order": [
+        "after",
+        "baseline"
+      ],
+      "runs": {
+        "after": {
+          "started_utc": "2026-09-14T10:48:52Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 80.47967456399783,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "47d29a89a222036a2289c0dbd48086cacab4930c4ae18a6996fe45e1c9df45ea",
+          "counters": {
+            "Conflicts": 199982,
+            "Decisions": 5725734,
+            "Unit Propagations": 170558690,
+            "BCP Calls": 6020610,
+            "Restarts": 805,
+            "Blocked Restarts": 1334,
+            "Clause Reductions": 10,
+            "Deleted Clauses": 130971,
+            "Minimized Literals": 1901567,
+            "Clause Activity Bumps": 1252874,
+            "Dynamic LBD Updates": 54074,
+            "Eliminated Variables": 39849,
+            "Subsumed Clauses": 3804,
+            "SSR Strengthenings": 2275,
+            "LCM Runs": 11,
+            "LCM Reduced Clauses": 12297,
+            "Active Clauses": 98631
+          }
+        },
+        "baseline": {
+          "started_utc": "2026-09-14T10:50:12Z",
+          "outcome": "unsat",
+          "returncode": 20,
+          "external_timeout": false,
+          "wall_seconds": 81.0748789859972,
+          "cpu_affinity": 1,
+          "timeout_seconds": 1000.0,
+          "memory_limit_bytes": 12884901888,
+          "log_sha256": "17bcef910053d8b977b9a0066953e72e55220e633c863238942f429051d06c91",
+          "counters": {
+            "Conflicts": 199982,
+            "Decisions": 5725734,
+            "Unit Propagations": 170558690,
+            "BCP Calls": 6020610,
+            "Restarts": 805,
+            "Blocked Restarts": 1334,
+            "Clause Reductions": 10,
+            "Deleted Clauses": 130971,
+            "Minimized Literals": 1901567,
+            "Clause Activity Bumps": 1252874,
+            "Dynamic LBD Updates": 54074,
+            "Eliminated Variables": 39849,
+            "Subsumed Clauses": 3804,
+            "SSR Strengthenings": 2275,
+            "LCM Runs": 11,
+            "LCM Reduced Clauses": 12297,
+            "Active Clauses": 98631
+          }
+        }
+      },
+      "checks": {
+        "verdicts_match": true,
+        "matches_known_status": true,
+        "integer_counters_match": true,
+        "known_unsat_status": true,
+        "unsat_proof_checked": false
+      },
+      "passed": true
+    }
+  ]
+}
